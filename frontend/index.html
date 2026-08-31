@@ -3,184 +3,62 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SHINEX - Marketplace</title>
+    <title>SHINEX Marketplace — Buy & Sell Safely</title>
     
-    <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
     
-    <!-- Font Awesome for icons -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts: Inter -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
     
-    <!-- Custom CSS -->
-    <link rel="stylesheet" href="/css/style.css">
+    <!-- Main Stylesheet -->
+    <link rel="stylesheet" href="css/style.css">
+    
+    <!-- Favicon -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛍️</text></svg>">
 </head>
 <body>
-    <!-- Navigation -->
-    <nav id="main-nav" class="main-nav">
-        <div class="nav-container">
-            <div class="nav-brand">
-                <a href="/" class="brand-link">SHINEX</a>
-            </div>
-            
-            <div class="nav-search">
-                <input type="text" id="search-input" placeholder="Search products..." class="search-input">
-                <button id="search-btn" class="search-btn">
-                    <i class="fas fa-search"></i>
-                </button>
-            </div>
-            
-            <div class="nav-actions">
-                <button id="nav-home" class="nav-btn active" data-page="home">
-                    <i class="fas fa-home"></i>
-                    <span>Home</span>
-                </button>
-                <button id="nav-favorites" class="nav-btn" data-page="favorites">
-                    <i class="fas fa-heart"></i>
-                    <span>Favorites</span>
-                </button>
-                <button id="nav-sell" class="nav-btn sell-btn" data-page="sell">
-                    <i class="fas fa-plus-circle"></i>
-                    <span>Sell</span>
-                </button>
-                <button id="nav-activity" class="nav-btn" data-page="activity">
-                    <i class="fas fa-bell"></i>
-                    <span>Activity</span>
-                </button>
-                <button id="nav-profile" class="nav-btn" data-page="profile">
-                    <i class="fas fa-user"></i>
-                    <span>Profile</span>
-                </button>
-            </div>
-            
-            <button id="mobile-menu-btn" class="mobile-menu-btn">
-                <i class="fas fa-bars"></i>
-            </button>
-        </div>
-        
-        <!-- Mobile Navigation -->
-        <div id="mobile-nav" class="mobile-nav hidden">
-            <a href="/" class="mobile-nav-item" data-page="home">
-                <i class="fas fa-home"></i> Home
-            </a>
-            <a href="/favorites" class="mobile-nav-item" data-page="favorites">
-                <i class="fas fa-heart"></i> Favorites
-            </a>
-            <a href="/sell" class="mobile-nav-item" data-page="sell">
-                <i class="fas fa-plus-circle"></i> Sell
-            </a>
-            <a href="/activity" class="mobile-nav-item" data-page="activity">
-                <i class="fas fa-bell"></i> Activity
-            </a>
-            <a href="/profile" class="mobile-nav-item" data-page="profile">
-                <i class="fas fa-user"></i> Profile
-            </a>
-        </div>
-    </nav>
+    <!-- App Container -->
+    <div id="app">
+        <!-- Header will be injected here -->
+        <header id="main-header"></header>
 
-    <!-- Main Content -->
-    <main id="app" class="app-container">
-        <!-- Pages will be rendered here -->
-        <div id="page-content"></div>
-    </main>
+        <!-- Main Content -->
+        <main id="main-content">
+            <!-- Pages will be rendered here -->
+        </main>
 
-    <!-- Footer -->
-    <footer class="main-footer">
-        <div class="footer-container">
-            <div class="footer-grid">
-                <div class="footer-section">
-                    <h3>SHINEX</h3>
-                    <p>Your trusted marketplace for buying and selling.</p>
-                    <div class="footer-social">
-                        <a href="#"><i class="fab fa-facebook"></i></a>
-                        <a href="#"><i class="fab fa-twitter"></i></a>
-                        <a href="#"><i class="fab fa-instagram"></i></a>
-                        <a href="#"><i class="fab fa-youtube"></i></a>
-                    </div>
-                </div>
-                
-                <div class="footer-section">
-                    <h4>Quick Links</h4>
-                    <a href="/about">About Us</a>
-                    <a href="/contact">Contact</a>
-                    <a href="/advertise">Advertise With Us</a>
-                    <a href="/privacy-policy">Privacy Policy</a>
-                    <a href="/terms">Terms & Conditions</a>
-                </div>
-                
-                <div class="footer-section">
-                    <h4>Contact Info</h4>
-                    <p><i class="fas fa-phone"></i> <a href="tel:+2347067574479">+234 706 757 4479</a></p>
-                    <p><i class="fab fa-whatsapp"></i> <a href="https://wa.me/2348025052852">+234 802 505 2852</a></p>
-                    <p><i class="fas fa-envelope"></i> <a href="mailto:info@shinex.com">info@shinex.com</a></p>
-                </div>
-                
-                <div class="footer-section">
-                    <h4>Secure Payments</h4>
-                    <p>Powered by Paystack</p>
-                    <img src="https://paystack.com/assets/img/paystack-logo.svg" alt="Paystack" class="footer-payment-logo">
-                </div>
-            </div>
-            
-            <div class="footer-bottom">
-                <p>&copy; 2026 SHINEX. All rights reserved.</p>
-            </div>
-        </div>
-    </footer>
+        <!-- Footer -->
+        <footer id="main-footer"></footer>
 
-    <!-- Report Modal -->
-    <div id="report-modal" class="modal hidden">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>Report</h2>
-                <button class="modal-close">&times;</button>
-            </div>
-            <div class="modal-body">
-                <form id="report-form">
-                    <input type="hidden" id="report-target-type">
-                    <input type="hidden" id="report-target-id">
-                    
-                    <div class="form-group">
-                        <label for="report-reason">Reason</label>
-                        <select id="report-reason" required>
-                            <option value="">Select a reason</option>
-                            <option value="inappropriate">Inappropriate content</option>
-                            <option value="spam">Spam or misleading</option>
-                            <option value="scam">Scam or fraud</option>
-                            <option value="fake">Fake or counterfeit</option>
-                            <option value="harassment">Harassment or abuse</option>
-                            <option value="other">Other</option>
-                        </select>
-                    </div>
-                    
-                    <div class="form-group">
-                        <label for="report-details">Additional Details (Optional)</label>
-                        <textarea id="report-details" rows="4"></textarea>
-                    </div>
-                    
-                    <button type="submit" class="btn btn-primary">Submit Report</button>
-                </form>
-            </div>
-        </div>
+        <!-- Mobile Bottom Navigation -->
+        <nav id="bottom-nav"></nav>
+
+        <!-- Toast Notification Container -->
+        <div id="toast-container"></div>
     </div>
 
-   <!-- Scripts -->
-<script src="/js/api.js"></script>
-<script src="/js/router.js"></script>
-<script src="/js/app.js"></script>
-<script src="/pages/home.js"></script>
-<script src="/pages/shop.js"></script>
-<script src="/pages/product.js"></script>
-<script src="/pages/favorites.js"></script>
-<script src="/pages/sell.js"></script>
-<script src="/pages/activity.js"></script>
-<script src="/pages/profile.js"></script>
-<script src="/pages/advertise.js"></script>
-<script src="/pages/admin.js"></script>
-<script src="/pages/contact.js"></script>
-<script src="/pages/about.js"></script>
-<script src="/pages/policy.js"></script>
-<script src="/pages/terms.js"></script>
-<script src="/pages/settings.js"></script>
+    <!-- Main JavaScript Files -->
+    <script src="js/utils.js"></script>
+    <script src="js/api.js"></script>
+    <script src="js/router.js"></script>
+    <script src="js/app.js"></script>
     
+    <!-- Page Modules -->
+    <script src="pages/home.js"></script>
+    <script src="pages/shop.js"></script>
+    <script src="pages/product.js"></script>
+    <script src="pages/favorites.js"></script>
+    <script src="pages/sell.js"></script>
+    <script src="pages/activity.js"></script>
+    <script src="pages/profile.js"></script>
+    <script src="pages/advertise.js"></script>
+    <script src="pages/admin.js"></script>
+    <script src="pages/contact.js"></script>
+    <script src="pages/about.js"></script>
+    <script src="pages/policy.js"></script>
+    <script src="pages/terms.js"></script>
+    <script src="pages/login.js"></script>
+    <script src="pages/register.js"></script>
 </body>
 </html>
