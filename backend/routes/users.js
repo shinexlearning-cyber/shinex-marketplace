@@ -1,351 +1,55 @@
 const express = require('express');
-const { supabase } = require('../supabase/client');
-const authMiddleware = require('../middleware/auth');
-const { uploadSingle } = require('../middleware/upload');
-const { uploadImage, deleteImage } = require('../services/cloudinary');
-const { getPagination, buildPaginationResponse, isValidUUID } = require('../utils/helpers');
+const { supabase } = require('../../supabase/client');
+const authMiddleware = require('../../middleware/auth');
+const adminMiddleware = require('../../middleware/admin');
+const { getPagination } = require('../../utils/helpers');
 const router = express.Router();
 
-// Get current user profile (authenticated)
-router.get('/me', authMiddleware, async (req, res) => {
+// All routes require authentication and admin privileges
+router.use(authMiddleware, adminMiddleware);
+
+// Get all users with pagination and search
+router.get('/', async (req, res) => {
   try {
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', req.user.id)
-      .single();
-
-    if (error || !user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    delete user.password_hash;
-    delete user.reset_token;
-
-    res.json({
-      success: true,
-      data: { user }
-    });
-  } catch (error) {
-    console.error('Get profile error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch profile'
-    });
-  }
-});
-
-// Get public user profile by username
-router.get('/:username', async (req, res) => {
-  try {
-    const { username } = req.params;
-
-    // Get user profile
-    const { data: user, error } = await supabase
-      .from('users')
-      .select('id, username, full_name, bio, location, whatsapp, avatar_url, shop_name, shop_description, created_at')
-      .eq('username', username)
-      .single();
-
-    if (error || !user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found'
-      });
-    }
-
-    // Get product count
-    const { count: productCount, error: productCountError } = await supabase
-      .from('products')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', user.id)
-      .eq('is_active', true);
-
-    if (productCountError) {
-      console.error('Product count error:', productCountError);
-    }
-
-    // Get shop information
-    const shopData = {
-      shop_name: user.shop_name || user.username,
-      shop_description: user.shop_description || null,
-      product_count: productCount || 0,
-      username: user.username,
-      profile_picture: user.avatar_url,
-      bio: user.bio,
-      location: user.location,
-      whatsapp: user.whatsapp
-    };
-
-    res.json({
-      success: true,
-      data: {
-        user: {
-          id: user.id,
-          username: user.username,
-          full_name: user.full_name,
-          avatar_url: user.avatar_url,
-          bio: user.bio,
-          location: user.location,
-          whatsapp: user.whatsapp,
-          created_at: user.created_at
-        },
-        shop: shopData
-      }
-    });
-  } catch (error) {
-    console.error('Get public profile error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch user profile'
-    });
-  }
-});
-
-// Get user's shop
-router.get('/:username/shop', async (req, res) => {
-  try {
-    const { username } = req.params;
-    const { page = 1, limit = 20 } = req.query;
+    const { search, page = 1, limit = 20, status } = req.query;
     const { offset, limit: pageLimit } = getPagination(page, limit);
 
-    // Get user
-    const { data: user, error: userError } = await supabase
+    let query = supabase
       .from('users')
-      .select('id, username, full_name, bio, location, whatsapp, avatar_url, shop_name, shop_description')
-      .eq('username', username)
-      .single();
+      .select('*', { count: 'exact' });
 
-    if (userError || !user) {
-      return res.status(404).json({
-        success: false,
-        message: 'Shop not found'
-      });
+    if (search) {
+      query = query.or(`username.ilike.%${search}%,full_name.ilike.%${search}%,email.ilike.%${search}%`);
     }
 
-    // Get products
-    const { data: products, error: productsError, count } = await supabase
-      .from('products')
-      .select(`
-        *,
-        category:categories(name, slug),
-        images:product_images(*)
-      `, { count: 'exact' })
-      .eq('user_id', user.id)
-      .eq('is_active', true)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + pageLimit - 1);
-
-    if (productsError) {
-      console.error('Products fetch error:', productsError);
+    if (status === 'suspended') {
+      query = query.eq('is_suspended', true);
+    } else if (status === 'active') {
+      query = query.eq('is_suspended', false);
     }
 
-    // Format products
-    const formattedProducts = (products || []).map(product => ({
-      ...product,
-      primary_image: product.images?.find(img => img.is_primary)?.image_url || 
-                     product.images?.[0]?.image_url || null
-    }));
-
-    res.json({
-      success: true,
-      data: {
-        shop: {
-          shop_name: user.shop_name || user.username,
-          shop_description: user.shop_description || null,
-          username: user.username,
-          full_name: user.full_name,
-          avatar_url: user.avatar_url,
-          bio: user.bio,
-          location: user.location,
-          whatsapp: user.whatsapp,
-          product_count: count || 0
-        },
-        products: formattedProducts,
-        pagination: {
-          page: parseInt(page),
-          limit: parseInt(pageLimit),
-          total: count || 0,
-          totalPages: Math.ceil((count || 0) / pageLimit)
-        }
-      }
-    });
-  } catch (error) {
-    console.error('Get shop error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch shop'
-    });
-  }
-});
-
-// Update profile
-router.put('/me', authMiddleware, async (req, res) => {
-  try {
-    const { full_name, bio, location, whatsapp, shop_name, shop_description } = req.body;
-
-    const updates = {};
-    if (full_name) updates.full_name = full_name;
-    if (bio !== undefined) updates.bio = bio;
-    if (location !== undefined) updates.location = location;
-    if (whatsapp !== undefined) updates.whatsapp = whatsapp;
-    if (shop_name !== undefined) updates.shop_name = shop_name;
-    if (shop_description !== undefined) updates.shop_description = shop_description;
-
-    const { data: user, error } = await supabase
-      .from('users')
-      .update(updates)
-      .eq('id', req.user.id)
-      .select('*')
-      .single();
-
-    if (error) {
-      console.error('Update profile error:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to update profile'
-      });
-    }
-
-    delete user.password_hash;
-    delete user.reset_token;
-
-    res.json({
-      success: true,
-      message: 'Profile updated successfully',
-      data: { user }
-    });
-  } catch (error) {
-    console.error('Update profile error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to update profile'
-    });
-  }
-});
-
-// Upload profile picture
-router.post('/me/avatar', authMiddleware, uploadSingle, async (req, res) => {
-  try {
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please upload an image file'
-      });
-    }
-
-    // Get current user
-    const { data: currentUser, error: userError } = await supabase
-      .from('users')
-      .select('avatar_public_id')
-      .eq('id', req.user.id)
-      .single();
-
-    if (userError) {
-      console.error('Get user error:', userError);
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to update avatar'
-      });
-    }
-
-    // Delete old avatar if exists
-    if (currentUser?.avatar_public_id) {
-      try {
-        await deleteImage(currentUser.avatar_public_id);
-      } catch (error) {
-        console.error('Delete old avatar error:', error);
-        // Continue even if delete fails
-      }
-    }
-
-    // Upload new avatar
-    const result = await uploadImage(req.file.buffer, 'shinex_avatars');
-
-    // Update user
-    const { data: user, error } = await supabase
-      .from('users')
-      .update({
-        avatar_url: result.url,
-        avatar_public_id: result.publicId
-      })
-      .eq('id', req.user.id)
-      .select('*')
-      .single();
-
-    if (error) {
-      console.error('Update avatar error:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to update avatar'
-      });
-    }
-
-    delete user.password_hash;
-
-    res.json({
-      success: true,
-      message: 'Profile picture updated successfully',
-      data: {
-        user
-      }
-    });
-  } catch (error) {
-    console.error('Avatar upload error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to upload profile picture'
-    });
-  }
-});
-
-// Get user's products
-router.get('/:userId/products', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const { page = 1, limit = 20 } = req.query;
-    const { offset, limit: pageLimit } = getPagination(page, limit);
-
-    if (!isValidUUID(userId)) {
-      return res.status(400).json({
-        success: false,
-        message: 'Invalid user ID'
-      });
-    }
-
-    const { data: products, error, count } = await supabase
-      .from('products')
-      .select(`
-        *,
-        category:categories(name, slug),
-        images:product_images(*)
-      `, { count: 'exact' })
-      .eq('user_id', userId)
-      .eq('is_active', true)
+    const { data: users, error, count } = await query
       .order('created_at', { ascending: false })
       .range(offset, offset + pageLimit - 1);
 
     if (error) {
-      console.error('Get user products error:', error);
+      console.error('Get users error:', error);
       return res.status(500).json({
         success: false,
-        message: 'Failed to fetch products'
+        message: 'Failed to fetch users'
       });
     }
 
-    // Format products with primary image
-    const formattedProducts = (products || []).map(product => ({
-      ...product,
-      primary_image: product.images?.find(img => img.is_primary)?.image_url || 
-                     product.images?.[0]?.image_url || null
-    }));
+    // Remove sensitive data
+    const sanitizedUsers = users.map(user => {
+      delete user.password_hash;
+      delete user.reset_token;
+      return user;
+    });
 
     res.json({
       success: true,
-      data: formattedProducts,
+      data: sanitizedUsers,
       pagination: {
         page: parseInt(page),
         limit: parseInt(pageLimit),
@@ -354,10 +58,204 @@ router.get('/:userId/products', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Get user products error:', error);
+    console.error('Get users error:', error);
     res.status(500).json({
       success: false,
-      message: 'Failed to fetch user products'
+      message: 'Failed to fetch users'
+    });
+  }
+});
+
+// Get single user
+router.get('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error || !user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    delete user.password_hash;
+    delete user.reset_token;
+
+    // Get user stats
+    const { count: productCount } = await supabase
+      .from('products')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', id);
+
+    const { count: adCount } = await supabase
+      .from('advertisements')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', id);
+
+    const { count: reportCount } = await supabase
+      .from('reports')
+      .select('*', { count: 'exact', head: true })
+      .eq('reporter_id', id);
+
+    res.json({
+      success: true,
+      data: {
+        ...user,
+        stats: {
+          products: productCount || 0,
+          advertisements: adCount || 0,
+          reports: reportCount || 0
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Get user error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch user'
+    });
+  }
+});
+
+// Suspend user
+router.patch('/:id/suspend', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    // Prevent admin from suspending themselves
+    if (id === req.user.id) {
+      return res.status(400).json({
+        success: false,
+        message: 'You cannot suspend your own account'
+      });
+    }
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .update({
+        is_suspended: true,
+        suspension_reason: reason || 'No reason provided',
+        suspended_at: new Date().toISOString()
+      })
+      .eq('id', id)
+      .select('id, username, full_name, email, is_suspended')
+      .single();
+
+    if (error || !user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'User suspended successfully',
+      data: user
+    });
+  } catch (error) {
+    console.error('Suspend user error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to suspend user'
+    });
+  }
+});
+
+// Unsuspend user
+router.patch('/:id/unsuspend', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data: user, error } = await supabase
+      .from('users')
+      .update({
+        is_suspended: false,
+        suspension_reason: null,
+        suspended_at: null
+      })
+      .eq('id', id)
+      .select('id, username, full_name, email, is_suspended')
+      .single();
+
+    if (error || !user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'User unsuspended successfully',
+      data: user
+    });
+  } catch (error) {
+    console.error('Unsuspend user error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to unsuspend user'
+    });
+  }
+});
+
+// Delete user (admin only - hard delete)
+router.delete('/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Prevent admin from deleting themselves
+    if (id === req.user.id) {
+      return res.status(400).json({
+        success: false,
+        message: 'You cannot delete your own account'
+      });
+    }
+
+    // Check if user exists
+    const { data: user, error: checkError } = await supabase
+      .from('users')
+      .select('id')
+      .eq('id', id)
+      .single();
+
+    if (checkError || !user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Delete user (cascade will handle related records)
+    const { error } = await supabase
+      .from('users')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Delete user error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to delete user'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'User deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete user error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete user'
     });
   }
 });
