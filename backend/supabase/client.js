@@ -2,13 +2,18 @@ const { createClient } = require('@supabase/supabase-js');
 require('dotenv').config();
 
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-// Service role client - for backend operations with full access
-const supabase = createClient(supabaseUrl, supabaseServiceRoleKey);
+if (!supabaseUrl || !supabaseServiceKey) {
+  throw new Error('Missing Supabase credentials in environment variables');
+}
 
-// Anon client - for operations that should use RLS
-const supabaseAnon = createClient(supabaseUrl, supabaseAnonKey);
+// Use service role key for backend operations (bypasses RLS)
+const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false
+  }
+});
 
-module.exports = { supabase, supabaseAnon };
+module.exports = { supabase };
