@@ -1,174 +1,365 @@
 const express = require('express');
-const router = express.Router();
-const bcrypt = require('bcryptjs');
 const { supabase } = require('../supabase/client');
 const authMiddleware = require('../middleware/auth');
-const { body, validationResult } = require('express-validator');
+const { uploadSingle } = require('../middleware/upload');
+const { uploadImage, deleteImage } = require('../services/cloudinary');
+const { getPagination, buildPaginationResponse, isValidUUID } = require('../utils/helpers');
+const router = express.Router();
 
-// Get user by username (public)
+// Get current user profile (authenticated)
+router.get('/me', authMiddleware, async (req, res) => {
+  try {
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('id', req.user.id)
+      .single();
+
+    if (error || !user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    delete user.password_hash;
+    delete user.reset_token;
+
+    res.json({
+      success: true,
+      data: { user }
+    });
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch profile'
+    });
+  }
+});
+
+// Get public user profile by username
 router.get('/:username', async (req, res) => {
-    try {
-        const { username } = req.params;
+  try {
+    const { username } = req.params;
 
-        const { data: user, error } = await supabase
-            .from('users')
-            .select('id, username, full_name, avatar, bio, location, whatsapp, created_at')
-            .eq('username', username)
-            .single();
+    // Get user profile
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id, username, full_name, bio, location, whatsapp, avatar_url, shop_name, shop_description, created_at')
+      .eq('username', username)
+      .single();
 
-        if (error || !user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        res.json({ user });
-    } catch (error) {
-        console.error('Error fetching user:', error);
-        res.status(500).json({ error: 'Server error' });
+    if (error || !user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
     }
+
+    // Get product count
+    const { count: productCount, error: productCountError } = await supabase
+      .from('products')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', user.id)
+      .eq('is_active', true);
+
+    if (productCountError) {
+      console.error('Product count error:', productCountError);
+    }
+
+    // Get shop information
+    const shopData = {
+      shop_name: user.shop_name || user.username,
+      shop_description: user.shop_description || null,
+      product_count: productCount || 0,
+      username: user.username,
+      profile_picture: user.avatar_url,
+      bio: user.bio,
+      location: user.location,
+      whatsapp: user.whatsapp
+    };
+
+    res.json({
+      success: true,
+      data: {
+        user: {
+          id: user.id,
+          username: user.username,
+          full_name: user.full_name,
+          avatar_url: user.avatar_url,
+          bio: user.bio,
+          location: user.location,
+          whatsapp: user.whatsapp,
+          created_at: user.created_at
+        },
+        shop: shopData
+      }
+    });
+  } catch (error) {
+    console.error('Get public profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch user profile'
+    });
+  }
 });
 
-// Update profile (authenticated)
-router.put('/profile', authMiddleware, [
-    body('full_name').optional().notEmpty().withMessage('Full name cannot be empty'),
-    body('bio').optional(),
-    body('location').optional(),
-    body('phone').optional(),
-    body('whatsapp').optional(),
-    body('avatar').optional().isURL().withMessage('Avatar must be a valid URL')
-], async (req, res) => {
-    try {
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-            return res.status(400).json({ errors: errors.array() });
-        }
+// Get user's shop
+router.get('/:username/shop', async (req, res) => {
+  try {
+    const { username } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+    const { offset, limit: pageLimit } = getPagination(page, limit);
 
-        const updates = req.body;
+    // Get user
+    const { data: user, error: userError } = await supabase
+      .from('users')
+      .select('id, username, full_name, bio, location, whatsapp, avatar_url, shop_name, shop_description')
+      .eq('username', username)
+      .single();
 
-        // Don't allow updating sensitive fields
-        delete updates.id;
-        delete updates.username;
-        delete updates.email;
-        delete updates.password_hash;
-        delete updates.is_admin;
-        delete updates.suspended;
-        delete updates.created_at;
-
-        const { data: user, error } = await supabase
-            .from('users')
-            .update({
-                ...updates,
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', req.user.id)
-            .select()
-            .single();
-
-        if (error) {
-            console.error('Error updating profile:', error);
-            return res.status(500).json({ error: 'Failed to update profile' });
-        }
-
-        delete user.password_hash;
-        res.json({ user });
-    } catch (error) {
-        console.error('Error updating profile:', error);
-        res.status(500).json({ error: 'Server error' });
+    if (userError || !user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Shop not found'
+      });
     }
+
+    // Get products
+    const { data: products, error: productsError, count } = await supabase
+      .from('products')
+      .select(`
+        *,
+        category:categories(name, slug),
+        images:product_images(*)
+      `, { count: 'exact' })
+      .eq('user_id', user.id)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + pageLimit - 1);
+
+    if (productsError) {
+      console.error('Products fetch error:', productsError);
+    }
+
+    // Format products
+    const formattedProducts = (products || []).map(product => ({
+      ...product,
+      primary_image: product.images?.find(img => img.is_primary)?.image_url || 
+                     product.images?.[0]?.image_url || null
+    }));
+
+    res.json({
+      success: true,
+      data: {
+        shop: {
+          shop_name: user.shop_name || user.username,
+          shop_description: user.shop_description || null,
+          username: user.username,
+          full_name: user.full_name,
+          avatar_url: user.avatar_url,
+          bio: user.bio,
+          location: user.location,
+          whatsapp: user.whatsapp,
+          product_count: count || 0
+        },
+        products: formattedProducts,
+        pagination: {
+          page: parseInt(page),
+          limit: parseInt(pageLimit),
+          total: count || 0,
+          totalPages: Math.ceil((count || 0) / pageLimit)
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Get shop error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch shop'
+    });
+  }
 });
 
-// Change password (authenticated)
-router.post('/change-password', authMiddleware, [
-    body('current_password').notEmpty().withMessage('Current password is required'),
-    body('new_password').isLength({ min: 6 }).withMessage('New password must be at least 6 characters')
-], async (req, res) => {
-    try {
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-            return res.status(400).json({ errors: errors.array() });
-        }
+// Update profile
+router.put('/me', authMiddleware, async (req, res) => {
+  try {
+    const { full_name, bio, location, whatsapp, shop_name, shop_description } = req.body;
 
-        const { current_password, new_password } = req.body;
+    const updates = {};
+    if (full_name) updates.full_name = full_name;
+    if (bio !== undefined) updates.bio = bio;
+    if (location !== undefined) updates.location = location;
+    if (whatsapp !== undefined) updates.whatsapp = whatsapp;
+    if (shop_name !== undefined) updates.shop_name = shop_name;
+    if (shop_description !== undefined) updates.shop_description = shop_description;
 
-        // Get user with password
-        const { data: user, error } = await supabase
-            .from('users')
-            .select('password_hash')
-            .eq('id', req.user.id)
-            .single();
+    const { data: user, error } = await supabase
+      .from('users')
+      .update(updates)
+      .eq('id', req.user.id)
+      .select('*')
+      .single();
 
-        if (error || !user) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-
-        // Verify current password
-        const validPassword = await bcrypt.compare(current_password, user.password_hash);
-        if (!validPassword) {
-            return res.status(401).json({ error: 'Current password is incorrect' });
-        }
-
-        // Hash new password
-        const saltRounds = 10;
-        const newPasswordHash = await bcrypt.hash(new_password, saltRounds);
-
-        // Update password
-        const { error: updateError } = await supabase
-            .from('users')
-            .update({
-                password_hash: newPasswordHash,
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', req.user.id);
-
-        if (updateError) {
-            console.error('Error updating password:', updateError);
-            return res.status(500).json({ error: 'Failed to update password' });
-        }
-
-        res.json({ message: 'Password updated successfully' });
-    } catch (error) {
-        console.error('Error changing password:', error);
-        res.status(500).json({ error: 'Server error' });
+    if (error) {
+      console.error('Update profile error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to update profile'
+      });
     }
+
+    delete user.password_hash;
+    delete user.reset_token;
+
+    res.json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: { user }
+    });
+  } catch (error) {
+    console.error('Update profile error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update profile'
+    });
+  }
 });
 
-// Delete account (authenticated)
-router.delete('/account', authMiddleware, async (req, res) => {
-    try {
-        // Check if user has any active listings
-        const { data: products, error: productError } = await supabase
-            .from('products')
-            .select('id')
-            .eq('seller_id', req.user.id)
-            .eq('status', 'active')
-            .limit(1);
-
-        if (productError) {
-            console.error('Error checking products:', productError);
-            return res.status(500).json({ error: 'Failed to check active listings' });
-        }
-
-        if (products && products.length > 0) {
-            return res.status(400).json({
-                error: 'You have active listings. Please delete or mark them as sold first.'
-            });
-        }
-
-        // Delete user (cascade will delete related records)
-        const { error } = await supabase
-            .from('users')
-            .delete()
-            .eq('id', req.user.id);
-
-        if (error) {
-            console.error('Error deleting account:', error);
-            return res.status(500).json({ error: 'Failed to delete account' });
-        }
-
-        res.json({ message: 'Account deleted successfully' });
-    } catch (error) {
-        console.error('Error deleting account:', error);
-        res.status(500).json({ error: 'Server error' });
+// Upload profile picture
+router.post('/me/avatar', authMiddleware, uploadSingle, async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'Please upload an image file'
+      });
     }
+
+    // Get current user
+    const { data: currentUser, error: userError } = await supabase
+      .from('users')
+      .select('avatar_public_id')
+      .eq('id', req.user.id)
+      .single();
+
+    if (userError) {
+      console.error('Get user error:', userError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to update avatar'
+      });
+    }
+
+    // Delete old avatar if exists
+    if (currentUser?.avatar_public_id) {
+      try {
+        await deleteImage(currentUser.avatar_public_id);
+      } catch (error) {
+        console.error('Delete old avatar error:', error);
+        // Continue even if delete fails
+      }
+    }
+
+    // Upload new avatar
+    const result = await uploadImage(req.file.buffer, 'shinex_avatars');
+
+    // Update user
+    const { data: user, error } = await supabase
+      .from('users')
+      .update({
+        avatar_url: result.url,
+        avatar_public_id: result.publicId
+      })
+      .eq('id', req.user.id)
+      .select('*')
+      .single();
+
+    if (error) {
+      console.error('Update avatar error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to update avatar'
+      });
+    }
+
+    delete user.password_hash;
+
+    res.json({
+      success: true,
+      message: 'Profile picture updated successfully',
+      data: {
+        user
+      }
+    });
+  } catch (error) {
+    console.error('Avatar upload error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload profile picture'
+    });
+  }
+});
+
+// Get user's products
+router.get('/:userId/products', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+    const { offset, limit: pageLimit } = getPagination(page, limit);
+
+    if (!isValidUUID(userId)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid user ID'
+      });
+    }
+
+    const { data: products, error, count } = await supabase
+      .from('products')
+      .select(`
+        *,
+        category:categories(name, slug),
+        images:product_images(*)
+      `, { count: 'exact' })
+      .eq('user_id', userId)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + pageLimit - 1);
+
+    if (error) {
+      console.error('Get user products error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch products'
+      });
+    }
+
+    // Format products with primary image
+    const formattedProducts = (products || []).map(product => ({
+      ...product,
+      primary_image: product.images?.find(img => img.is_primary)?.image_url || 
+                     product.images?.[0]?.image_url || null
+    }));
+
+    res.json({
+      success: true,
+      data: formattedProducts,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(pageLimit),
+        total: count || 0,
+        totalPages: Math.ceil((count || 0) / pageLimit)
+      }
+    });
+  } catch (error) {
+    console.error('Get user products error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch user products'
+    });
+  }
 });
 
 module.exports = router;
