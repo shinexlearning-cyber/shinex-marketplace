@@ -1,381 +1,304 @@
-// ===== APP STATE =====
-const App = {
-    currentUser: null,
+// ========================================
+// SHINEX MARKETPLACE — MAIN APP
+// ========================================
+
+// Import API and Router (already loaded via script tags)
+
+// ---------- APP STATE ----------
+const AppState = {
+    user: null,
     isAuthenticated: false,
-    page: 'home',
-    categories: []
+    isAdmin: false,
+    cartCount: 0,
+    favoritesCount: 0
 };
 
-// ===== DOM HELPERS =====
-function $(selector) {
-    return document.querySelector(selector);
+// ---------- INITIALIZATION ----------
+document.addEventListener('DOMContentLoaded', function() {
+    // Apply theme
+    const theme = getTheme();
+    document.documentElement.setAttribute('data-theme', theme);
+
+    // Register routes
+    registerRoutes();
+
+    // Initialize router
+    router.init();
+
+    // Render header and footer
+    renderHeader();
+    renderFooter();
+    renderBottomNav();
+
+    // Check auth status
+    checkAuth();
+
+    // Set up event listeners
+    setupEventListeners();
+});
+
+// ---------- ROUTE REGISTRATION ----------
+function registerRoutes() {
+    router
+        .add('/', homePage)
+        .add('/home', homePage)
+        .add('/login', loginPage)
+        .add('/register', registerPage)
+        .add('/favorites', favoritesPage)
+        .add('/sell', sellPage)
+        .add('/activity', activityPage)
+        .add('/profile', profilePage)
+        .add('/settings', settingsPage)
+        .add('/advertise', advertisePage)
+        .add('/admin', adminPage)
+        .add('/contact', contactPage)
+        .add('/about', aboutPage)
+        .add('/privacy-policy', policyPage)
+        .add('/terms', termsPage)
+        .add('/shop/:username', shopPage)
+        .add('/product/:id', productPage);
 }
 
-function $$(selector) {
-    return document.querySelectorAll(selector);
-}
-
-function createElement(tag, className = '', innerHTML = '') {
-    const el = document.createElement(tag);
-    if (className) el.className = className;
-    if (innerHTML) el.innerHTML = innerHTML;
-    return el;
-}
-
-function showPage(content) {
-    const pageContent = document.getElementById('page-content');
-    if (pageContent) {
-        pageContent.innerHTML = content;
-    }
-}
-
-function showToast(message, type = 'success') {
-    const existing = document.querySelector('.toast-container');
-    if (!existing) {
-        const container = createElement('div', 'toast-container');
-        container.style.cssText = `
-            position: fixed;
-            bottom: 2rem;
-            right: 2rem;
-            z-index: 9999;
-            max-width: 400px;
-        `;
-        document.body.appendChild(container);
-    }
-    
-    const toast = createElement('div', 'toast');
-    toast.style.cssText = `
-        background: ${type === 'error' ? '#ef4444' : type === 'warning' ? '#f59e0b' : '#22c55e'};
-        color: white;
-        padding: 1rem 1.5rem;
-        border-radius: 8px;
-        margin-top: 0.5rem;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        animation: slideIn 0.3s ease;
-        font-weight: 500;
-    `;
-    toast.textContent = message;
-    
-    document.querySelector('.toast-container').appendChild(toast);
-    
-    setTimeout(() => {
-        toast.style.opacity = '0';
-        toast.style.transform = 'translateX(100%)';
-        toast.style.transition = 'all 0.3s ease';
-        setTimeout(() => toast.remove(), 300);
-    }, 4000);
-}
-
-// ===== ROUTE HANDLERS =====
-function loadHome(params) {
-    HomePage.render(params);
-}
-
-function loadShop(params) {
-    ShopPage.render(params);
-}
-
-function loadProduct(params) {
-    ProductPage.render(params);
-}
-
-function loadFavorites() {
-    FavoritesPage.render();
-}
-
-function loadSell() {
-    SellPage.render();
-}
-
-function loadActivity() {
-    ActivityPage.render();
-}
-
-function loadProfile() {
-    ProfilePage.render();
-}
-
-function loadAdvertise() {
-    AdvertisePage.render();
-}
-
-function loadAdmin() {
-    AdminPage.render();
-}
-
-function loadContact() {
-    ContactPage.render();
-}
-
-function loadAbout() {
-    AboutPage.render();
-}
-
-function loadPrivacy() {
-    PrivacyPage.render();
-}
-
-function loadTerms() {
-    TermsPage.render();
-}
-
-function loadLogin() {
-    LoginPage.render();
-}
-
-function loadRegister() {
-    RegisterPage.render();
-}
-
-// ===== NAVIGATION =====
-function navigateTo(path, params = {}) {
-    router.navigate(path, params);
-}
-
-// ===== SETUP ROUTES =====
-function setupRoutes() {
-    router.addRoute('', loadHome);
-    router.addRoute('home', loadHome);
-    router.addRoute('shop/:username', loadShop);
-    router.addRoute('product/:id', loadProduct);
-    router.addRoute('favorites', loadFavorites);
-    router.addRoute('sell', loadSell);
-    router.addRoute('activity', loadActivity);
-    router.addRoute('profile', loadProfile);
-    router.addRoute('advertise', loadAdvertise);
-    router.addRoute('admin', loadAdmin);
-    router.addRoute('contact', loadContact);
-    router.addRoute('about', loadAbout);
-    router.addRoute('privacy-policy', loadPrivacy);
-    router.addRoute('terms', loadTerms);
-    router.addRoute('login', loadLogin);
-    router.addRoute('register', loadRegister);
-    router.addRoute('*', (path) => {
-        showPage(`<div class="container"><h1>404 - Page Not Found</h1><p>The page "${path}" does not exist.</p><a href="/">Go Home</a></div>`);
-    });
-}
-
-// ===== NAVIGATION BUTTONS =====
-function setupNavigation() {
-    // Desktop nav buttons
-    const navButtons = document.querySelectorAll('.nav-btn');
-    navButtons.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            const page = btn.dataset.page;
-            if (page === 'sell') {
-                if (!App.isAuthenticated) {
-                    showToast('Please login to sell', 'warning');
-                    navigateTo('/login');
-                    return;
-                }
-            }
-            if (page) {
-                navigateTo(`/${page}`);
-                // Update active state
-                navButtons.forEach(b => b.classList.remove('active'));
-                btn.classList.add('active');
-            }
-        });
-    });
-
-    // Mobile nav
-    const mobileMenuBtn = document.getElementById('mobile-menu-btn');
-    const mobileNav = document.getElementById('mobile-nav');
-    if (mobileMenuBtn && mobileNav) {
-        mobileMenuBtn.addEventListener('click', () => {
-            mobileNav.classList.toggle('hidden');
-        });
-    }
-
-    const mobileNavItems = document.querySelectorAll('.mobile-nav-item');
-    mobileNavItems.forEach(item => {
-        item.addEventListener('click', (e) => {
-            e.preventDefault();
-            const page = item.dataset.page;
-            if (page) {
-                navigateTo(`/${page}`);
-                mobileNav.classList.add('hidden');
-            }
-        });
-    });
-
-    // Search
-    const searchInput = document.getElementById('search-input');
-    const searchBtn = document.getElementById('search-btn');
-    
-    function performSearch() {
-        const query = searchInput.value.trim();
-        if (query) {
-            navigateTo('/home', { search: query });
-        }
-    }
-    
-    if (searchBtn) {
-        searchBtn.addEventListener('click', performSearch);
-    }
-    if (searchInput) {
-        searchInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                performSearch();
-            }
-        });
-    }
-}
-
-// ===== CHECK AUTH =====
+// ---------- AUTH CHECK ----------
 async function checkAuth() {
-    try {
-        const data = await api.getCurrentUser();
-        App.currentUser = data.user;
-        App.isAuthenticated = true;
-        updateNavForAuth(true);
-        return data.user;
-    } catch (error) {
-        App.currentUser = null;
-        App.isAuthenticated = false;
-        updateNavForAuth(false);
-        return null;
+    const token = getToken();
+    if (!token) {
+        AppState.isAuthenticated = false;
+        AppState.user = null;
+        updateUIForAuth();
+        return;
     }
+
+    try {
+        const response = await api.getMe();
+        if (response.success) {
+            AppState.user = response.data.user;
+            AppState.isAuthenticated = true;
+            AppState.isAdmin = response.data.user.is_admin || false;
+            localStorage.setItem('user', JSON.stringify(response.data.user));
+        } else {
+            clearAuthData();
+            AppState.isAuthenticated = false;
+            AppState.user = null;
+        }
+    } catch (error) {
+        console.error('Auth check failed:', error);
+        clearAuthData();
+        AppState.isAuthenticated = false;
+        AppState.user = null;
+    }
+
+    updateUIForAuth();
 }
 
-function updateNavForAuth(isAuth) {
-    const navProfile = document.getElementById('nav-profile');
-    const sellBtn = document.getElementById('nav-sell');
+// ---------- UI UPDATE ----------
+function updateUIForAuth() {
+    renderHeader();
+    renderBottomNav();
     
-    if (navProfile) {
-        if (isAuth) {
-            navProfile.innerHTML = `<i class="fas fa-user"></i><span>Profile</span>`;
+    // Update profile link
+    const profileLink = document.querySelector('.profile-link');
+    if (profileLink) {
+        if (AppState.isAuthenticated) {
+            profileLink.href = '#profile';
+            profileLink.innerHTML = `<i class="fas fa-user"></i> ${AppState.user?.full_name || 'Profile'}`;
         } else {
-            navProfile.innerHTML = `<i class="fas fa-sign-in-alt"></i><span>Login</span>`;
+            profileLink.href = '#login';
+            profileLink.innerHTML = `<i class="fas fa-sign-in-alt"></i> Login`;
         }
     }
-    
-    if (sellBtn) {
-        if (!isAuth) {
-            sellBtn.style.display = 'flex';
-        } else {
-            sellBtn.style.display = 'flex';
-        }
-    }
 }
 
-// ===== LOAD CATEGORIES =====
-async function loadCategories() {
-    try {
-        const data = await api.getAdminCategories();
-        App.categories = data.categories || [];
-    } catch (error) {
-        console.error('Error loading categories:', error);
-        App.categories = [];
-    }
-}
+// ---------- HEADER ----------
+function renderHeader() {
+    const header = document.getElementById('main-header');
+    if (!header) return;
 
-// ===== INIT =====
-async function init() {
-    // Setup routes
-    setupRoutes();
-    
-    // Setup navigation
-    setupNavigation();
-    
-    // Load categories
-    await loadCategories();
-    
-    // Check authentication
-    await checkAuth();
-    
-    // Handle initial route
-    const path = window.location.pathname.slice(1) || 'home';
-    router.handleRoute(path);
-    
-    // Handle popstate (browser back/forward)
-    window.addEventListener('popstate', () => {
-        const path = window.location.pathname.slice(1) || 'home';
-        router.handleRoute(path);
-    });
-    
-    // Global error handler
-    window.addEventListener('unhandledrejection', (event) => {
-        console.error('Unhandled rejection:', event.reason);
-        showToast('An unexpected error occurred', 'error');
-    });
-}
+    const isAuth = AppState.isAuthenticated;
+    const user = AppState.user;
 
-// ===== UTILITY FUNCTIONS =====
-function formatPrice(amount) {
-    return new Intl.NumberFormat('en-NG', {
-        style: 'currency',
-        currency: 'NGN',
-        minimumFractionDigits: 0
-    }).format(amount);
-}
+    header.innerHTML = `
+        <div class="container">
+            <div class="header-inner">
+                <div class="logo" onclick="router.navigate('/')">
+                    <span>SHINEX</span>
+                    <span class="marketplace">Marketplace</span>
+                </div>
 
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
+                <div class="header-search" id="header-search">
+                    <i class="fas fa-search search-icon"></i>
+                    <input type="text" id="search-input" placeholder="What are you looking for?" autocomplete="off">
+                </div>
 
-function truncateText(text, maxLength = 100) {
-    if (text.length <= maxLength) return text;
-    return text.slice(0, maxLength) + '...';
-}
+                <div class="header-actions">
+                    <button class="btn-icon mobile-search-btn" onclick="toggleMobileSearch()">
+                        <i class="fas fa-search"></i>
+                    </button>
 
-function getTimeAgo(date) {
-    const now = new Date();
-    const diff = now - new Date(date);
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(diff / 3600000);
-    const days = Math.floor(diff / 86400000);
-    
-    if (minutes < 1) return 'Just now';
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    if (days < 7) return `${days}d ago`;
-    return new Date(date).toLocaleDateString();
-}
+                    <button class="btn-icon theme-toggle" onclick="toggleThemeAndUpdate()">
+                        <i class="fas ${getTheme() === 'dark' ? 'fa-sun' : 'fa-moon'}"></i>
+                    </button>
 
-function generateProductCard(product) {
-    const firstImage = product.images && product.images.length > 0 ? product.images[0] : '/images/placeholder.jpg';
-    const isFavorited = false; // Will be checked later
-    
-    return `
-        <div class="product-card" data-product-id="${product.id}">
-            <div class="product-image">
-                <img src="${firstImage}" alt="${escapeHtml(product.name)}" loading="lazy">
-                <button class="product-favorite-btn ${isFavorited ? 'favorited' : ''}" onclick="event.stopPropagation(); toggleFavorite('product', '${product.id}')">
-                    <i class="fas fa-heart"></i>
-                </button>
-            </div>
-            <div class="product-info">
-                <div class="product-name">${escapeHtml(product.name)}</div>
-                <div class="product-price">${formatPrice(product.price)}</div>
-                <div class="product-seller">
-                    <span>by</span>
-                    <a href="/shop/${product.seller?.username || ''}" onclick="event.stopPropagation(); navigateTo('/shop/${product.seller?.username || ''}')">
-                        ${escapeHtml(product.seller?.full_name || 'Unknown')}
+                    <a href="#favorites" class="btn-icon">
+                        <i class="fas fa-heart"></i>
                     </a>
+
+                    ${isAuth ? `
+                        <a href="#sell" class="btn btn-primary btn-sm">
+                            <i class="fas fa-plus"></i> Sell
+                        </a>
+                        <a href="#profile" class="btn-icon profile-link">
+                            <i class="fas fa-user"></i>
+                        </a>
+                    ` : `
+                        <a href="#login" class="btn btn-primary btn-sm">Login</a>
+                        <a href="#register" class="btn btn-outline btn-sm">Sign Up</a>
+                    `}
                 </div>
-                <div class="product-meta">
-                    <span>${escapeHtml(product.location || '')}</span>
-                    <span class="product-condition ${product.condition?.toLowerCase() || ''}">${product.condition || ''}</span>
+            </div>
+        </div>
+    `;
+
+    // Set up search
+    const searchInput = document.getElementById('search-input');
+    if (searchInput) {
+        const debouncedSearch = debounce((e) => {
+            const query = e.target.value.trim();
+            if (query.length >= 2) {
+                // Navigate to home with search query
+                router.navigate('/');
+                // Trigger search in home page
+                setTimeout(() => {
+                    if (window.searchProducts) {
+                        window.searchProducts(query);
+                    }
+                }, 100);
+            }
+        }, 400);
+        searchInput.addEventListener('input', debouncedSearch);
+    }
+}
+
+// ---------- FOOTER ----------
+function renderFooter() {
+    const footer = document.getElementById('main-footer');
+    if (!footer) return;
+
+    footer.innerHTML = `
+        <div class="container">
+            <div class="footer-grid">
+                <div class="footer-brand">
+                    <h3>SHINEX Marketplace</h3>
+                    <p>Buy and sell with confidence. Safe, fast, and reliable.</p>
                 </div>
+                <div class="footer-links">
+                    <h4>Quick Links</h4>
+                    <a href="#/about">About</a>
+                    <a href="#/contact">Contact</a>
+                    <a href="#/favorites">Favorites</a>
+                    <a href="#/sell">Sell</a>
+                    <a href="#/advertise">Advertise</a>
+                </div>
+                <div class="footer-links">
+                    <h4>Legal</h4>
+                    <a href="#/privacy-policy">Privacy Policy</a>
+                    <a href="#/terms">Terms & Conditions</a>
+                </div>
+                <div class="footer-contact">
+                    <h4>Contact</h4>
+                    <p><i class="fas fa-envelope"></i> shinexlearning@gmail.com</p>
+                    <p><i class="fas fa-phone"></i> +234 706 757 4479</p>
+                    <p><i class="fab fa-whatsapp"></i> +234 802 505 2852</p>
+                </div>
+            </div>
+            <div class="footer-bottom">
+                &copy; ${new Date().getFullYear()} SHINEX Marketplace. All rights reserved.
             </div>
         </div>
     `;
 }
 
-function generateSellerCard(seller) {
-    return `
-        <div class="seller-card" onclick="navigateTo('/shop/${seller.username}')">
-            <div class="avatar">
-                <img src="${seller.avatar || '/images/default-avatar.jpg'}" alt="${escapeHtml(seller.full_name)}">
-            </div>
-            <div class="name">${escapeHtml(seller.full_name)}</div>
-            <div class="username">@${escapeHtml(seller.username)}</div>
-        </div>
+// ---------- BOTTOM NAV ----------
+function renderBottomNav() {
+    const nav = document.getElementById('bottom-nav');
+    if (!nav) return;
+
+    const isAuth = AppState.isAuthenticated;
+
+    nav.innerHTML = `
+        <button class="nav-item ${window.location.hash === '#/' || window.location.hash === '#/home' ? 'active' : ''}" onclick="router.navigate('/')">
+            <i class="fas fa-home"></i>
+            <span class="nav-label">Home</span>
+        </button>
+        <button class="nav-item ${window.location.hash === '#/favorites' ? 'active' : ''}" onclick="router.navigate('/favorites')">
+            <i class="fas fa-heart"></i>
+            <span class="nav-label">Favorites</span>
+        </button>
+        <button class="nav-item ${window.location.hash === '#/sell' ? 'active' : ''}" onclick="router.navigate('/sell')">
+            <i class="fas fa-plus-circle"></i>
+            <span class="nav-label">Sell</span>
+        </button>
+        <button class="nav-item ${window.location.hash === '#/advertise' ? 'active' : ''}" onclick="router.navigate('/advertise')">
+            <i class="fas fa-bullhorn"></i>
+            <span class="nav-label">Advertise</span>
+        </button>
+        <button class="nav-item ${window.location.hash === '#/profile' ? 'active' : ''}" onclick="router.navigate('${isAuth ? '/profile' : '/login'}')">
+            <i class="fas fa-user"></i>
+            <span class="nav-label">${isAuth ? 'Profile' : 'Login'}</span>
+        </button>
     `;
 }
 
-// Start the app when DOM is ready
-document.addEventListener('DOMContentLoaded', init);
+// ---------- EVENT LISTENERS ----------
+function setupEventListeners() {
+    // Close mobile search on outside click
+    document.addEventListener('click', function(e) {
+        const search = document.getElementById('header-search');
+        const searchBtn = document.querySelector('.mobile-search-btn');
+        if (search && search.classList.contains('mobile-show')) {
+            if (!search.contains(e.target) && !searchBtn?.contains(e.target)) {
+                search.classList.remove('mobile-show');
+            }
+        }
+    });
+}
+
+// ---------- TOGGLE MOBILE SEARCH ----------
+function toggleMobileSearch() {
+    const search = document.getElementById('header-search');
+    if (search) {
+        search.classList.toggle('mobile-show');
+        if (search.classList.contains('mobile-show')) {
+            const input = search.querySelector('input');
+            setTimeout(() => input?.focus(), 100);
+        }
+    }
+}
+
+// ---------- TOGGLE THEME ----------
+function toggleThemeAndUpdate() {
+    const newTheme = toggleTheme();
+    // Update header to show correct icon
+    renderHeader();
+    // Update footer
+    renderFooter();
+    // Update bottom nav
+    renderBottomNav();
+    showToast(`Switched to ${newTheme} mode`, 'info', 2000);
+}
+
+// ---------- EXPOSE GLOBALLY ----------
+window.router = router;
+window.api = api;
+window.AppState = AppState;
+window.showToast = showToast;
+window.formatCurrency = formatCurrency;
+window.formatDate = formatDate;
+window.timeAgo = timeAgo;
+window.truncateText = truncateText;
+window.toggleMobileSearch = toggleMobileSearch;
+window.toggleThemeAndUpdate = toggleThemeAndUpdate;
+window.checkAuth = checkAuth;
+window.isAuthenticated = isAuthenticated;
+window.getCurrentUser = getCurrentUser;
+window.clearAuthData = clearAuthData;
