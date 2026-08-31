@@ -1,259 +1,268 @@
-const AdvertisePage = {
-    imageUrl: null,
+// ========================================
+// SHINEX MARKETPLACE — ADVERTISE PAGE
+// ========================================
 
-    render() {
-        let html = `
-            <div class="advertise-page">
-                <div class="page-header">
-                    <h1>Advertise With Us</h1>
-                    <p>Promote your business, services, or products to thousands of shoppers</p>
-                </div>
+let advertiseState = {
+    pricing: [],
+    selectedDuration: null,
+    images: [],
+    submitting: false,
+    loading: true
+};
 
-                <div class="advertise-packages">
-                    <div class="package-card basic">
-                        <h3>Basic</h3>
-                        <div class="package-price">₦5,000</div>
-                        <ul>
-                            <li>7 days visibility</li>
-                            <li>Single flyer/image</li>
-                            <li>WhatsApp contact</li>
-                            <li>Basic promotion</li>
-                        </ul>
-                        <button class="btn btn-outline" onclick="AdvertisePage.selectPackage('basic')">Select</button>
+function advertisePage(params) {
+    const main = document.getElementById('main-content');
+    if (!main) return;
+
+    if (!isAuthenticated()) {
+        router.navigate('/login');
+        showToast('Please login to create advertisements', 'warning');
+        return;
+    }
+
+    renderAdvertisePage();
+    loadPricing();
+}
+
+function renderAdvertisePage() {
+    const main = document.getElementById('main-content');
+    if (!main) return;
+
+    const { pricing, selectedDuration, images, loading } = advertiseState;
+
+    // Build pricing options
+    const pricingHTML = pricing.map(p => {
+        const isSelected = selectedDuration?.id === p.id;
+        const displayPrice = formatCurrency(p.price);
+        return `
+            <div class="card" style="cursor:pointer;border:2px solid ${isSelected ? 'var(--primary)' : 'var(--border-color)'};padding:16px;transition:all var(--transition);"
+                 onclick="selectDuration('${p.id}')">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <div>
+                        <h4>${p.duration_days} Day${p.duration_days > 1 ? 's' : ''}</h4>
+                        <span style="font-size:20px;font-weight:700;color:var(--success);">${displayPrice}</span>
                     </div>
-
-                    <div class="package-card standard featured">
-                        <h3>Standard</h3>
-                        <div class="package-price">₦15,000</div>
-                        <ul>
-                            <li>30 days visibility</li>
-                            <li>Single flyer/image</li>
-                            <li>WhatsApp contact</li>
-                            <li>Featured placement</li>
-                            <li>Priority support</li>
-                        </ul>
-                        <button class="btn btn-primary" onclick="AdvertisePage.selectPackage('standard')">Select</button>
-                    </div>
-
-                    <div class="package-card premium">
-                        <h3>Premium</h3>
-                        <div class="package-price">₦50,000</div>
-                        <ul>
-                            <li>90 days visibility</li>
-                            <li>Single flyer/image</li>
-                            <li>WhatsApp contact</li>
-                            <li>Top featured placement</li>
-                            <li>Priority support</li>
-                            <li>Social media promotion</li>
-                        </ul>
-                        <button class="btn btn-outline" onclick="AdvertisePage.selectPackage('premium')">Select</button>
-                    </div>
-                </div>
-
-                <div class="advertise-form-container hidden" id="advertise-form-container">
-                    <h2>Create Your Advertisement</h2>
-                    <form id="advertise-form">
-                        <input type="hidden" id="ad-package" value="">
-                        
-                        <div class="form-group">
-                            <label for="ad-title">Advertisement Title *</label>
-                            <input type="text" id="ad-title" required placeholder="Enter advertisement title">
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="ad-description">Description</label>
-                            <textarea id="ad-description" rows="4" placeholder="Describe what you're advertising"></textarea>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="ad-whatsapp">WhatsApp Number</label>
-                            <input type="text" id="ad-whatsapp" placeholder="08012345678">
-                            <div class="help-text">Customers will contact you via this WhatsApp number</div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label>Advertisement Flyer/Image</label>
-                            <div class="image-upload-area" id="ad-image-upload">
-                                <i class="fas fa-cloud-upload-alt"></i>
-                                <p>Click to upload flyer/banner</p>
-                                <span class="upload-hint">PNG, JPG up to 5MB</span>
-                            </div>
-                            <input type="file" id="ad-image-input" accept="image/*" style="display:none">
-                            <div class="image-preview-container" id="ad-image-preview"></div>
-                        </div>
-                        
-                        <div class="form-group">
-                            <label>Selected Package: <strong id="selected-package-display">None</strong></label>
-                            <div class="package-summary">
-                                <span id="package-duration">Duration: -</span>
-                                <span id="package-amount">Amount: -</span>
-                            </div>
-                        </div>
-                        
-                        <button type="submit" class="btn btn-primary btn-block btn-lg">
-                            Create Advertisement
-                        </button>
-                    </form>
+                    ${isSelected ? `<i class="fas fa-check-circle" style="color:var(--primary);font-size:24px;"></i>` : ''}
                 </div>
             </div>
         `;
+    }).join('');
 
-        showPage(html);
+    // Image previews
+    const imagePreviews = images.map((img, index) => `
+        <div class="image-preview-item">
+            <img src="${img.url}" alt="Ad image ${index + 1}">
+            <button class="remove-image" onclick="removeAdImage(${index})">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    `).join('');
 
-        this.setupImageUpload();
-        this.setupForm();
-    },
+    main.innerHTML = `
+        <div class="container page-container" style="max-width:700px;margin:0 auto;">
+            <div class="page-header">
+                <h1>Advertise on SHINEX</h1>
+                <p>Reach more customers with sponsored advertisements</p>
+            </div>
 
-    selectPackage(pkg) {
-        document.getElementById('ad-package').value = pkg;
-        document.getElementById('selected-package-display').textContent = pkg.toUpperCase();
-        
-        const packages = {
-            basic: { duration: '7 days', amount: '₦5,000' },
-            standard: { duration: '30 days', amount: '₦15,000' },
-            premium: { duration: '90 days', amount: '₦50,000' }
-        };
-        
-        const details = packages[pkg];
-        document.getElementById('package-duration').textContent = `Duration: ${details.duration}`;
-        document.getElementById('package-amount').textContent = `Amount: ${details.amount}`;
-        
-        // Show form
-        document.getElementById('advertise-form-container').classList.remove('hidden');
-        
-        // Highlight selected package
-        document.querySelectorAll('.package-card').forEach(card => {
-            card.classList.remove('selected');
-            if (card.classList.contains(pkg)) {
-                card.classList.add('selected');
-            }
-        });
-        
-        // Scroll to form
-        document.getElementById('advertise-form-container').scrollIntoView({ behavior: 'smooth' });
-    },
+            <div class="card">
+                <form id="advertise-form" onsubmit="handleAdSubmit(event)">
+                    <div class="form-group">
+                        <label for="ad-title">Advertisement Title *</label>
+                        <input type="text" id="ad-title" placeholder="Enter a catchy title" required>
+                    </div>
 
-    setupImageUpload() {
-        const uploadArea = document.getElementById('ad-image-upload');
-        const fileInput = document.getElementById('ad-image-input');
-        const previewContainer = document.getElementById('ad-image-preview');
-        
-        if (!uploadArea || !fileInput) return;
-        
-        uploadArea.onclick = () => fileInput.click();
-        
-        fileInput.onchange = async (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            
-            if (!file.type.startsWith('image/')) {
-                showToast('Please upload an image file', 'warning');
-                return;
-            }
-            
-            if (file.size > 5 * 1024 * 1024) {
-                showToast('Image must be less than 5MB', 'warning');
-                return;
-            }
-            
-            try {
-                const formData = new FormData();
-                formData.append('file', file);
-                formData.append('upload_preset', 'shinex_ads');
-                formData.append('cloud_name', 'your_cloudinary_cloud_name');
-                
-                const response = await fetch('https://api.cloudinary.com/v1_1/your_cloudinary_cloud_name/image/upload', {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                const data = await response.json();
-                
-                if (data.secure_url) {
-                    this.imageUrl = data.secure_url;
-                    previewContainer.innerHTML = `
-                        <div class="image-preview">
-                            <img src="${data.secure_url}" alt="Advertisement flyer">
-                            <button type="button" class="remove-image" onclick="AdvertisePage.removeImage()">
-                                <i class="fas fa-times"></i>
-                            </button>
+                    <div class="form-group">
+                        <label for="ad-description">Description</label>
+                        <textarea id="ad-description" placeholder="Describe what you're promoting..." rows="3"></textarea>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Advertisement Image *</label>
+                        <div style="border:2px dashed var(--border-color);border-radius:8px;padding:24px;text-align:center;cursor:pointer;" 
+                             onclick="document.getElementById('ad-image-upload').click()">
+                            <i class="fas fa-cloud-upload-alt" style="font-size:32px;color:var(--text-muted);"></i>
+                            <p style="margin-top:8px;color:var(--text-muted);">Click to upload your ad flyer</p>
+                            <input type="file" id="ad-image-upload" accept="image/*" style="display:none;" onchange="handleAdImageUpload(event)">
                         </div>
-                    `;
-                    showToast('Image uploaded successfully!');
-                } else {
-                    showToast('Failed to upload image', 'error');
-                }
-            } catch (error) {
-                console.error('Upload error:', error);
-                showToast('Failed to upload image', 'error');
-            }
-        };
-    },
+                        ${images.length > 0 ? `<div class="image-preview-grid">${imagePreviews}</div>` : ''}
+                    </div>
 
-    removeImage() {
-        this.imageUrl = null;
-        document.getElementById('ad-image-preview').innerHTML = '';
-        document.getElementById('ad-image-input').value = '';
-    },
+                    <div class="form-group">
+                        <label>Select Duration & Price</label>
+                        ${loading ? '<p class="text-muted">Loading pricing options...</p>' : pricingHTML}
+                    </div>
 
-    setupForm() {
-        const form = document.getElementById('advertise-form');
-        if (form) {
-            form.onsubmit = async (e) => {
-                e.preventDefault();
-                await this.submitAd();
-            };
-        }
-    },
+                    ${selectedDuration ? `
+                        <div style="background:var(--bg-secondary);padding:16px;border-radius:8px;margin-bottom:16px;">
+                            <div class="flex-between">
+                                <span>Duration:</span>
+                                <strong>${selectedDuration.duration_days} Day${selectedDuration.duration_days > 1 ? 's' : ''}</strong>
+                            </div>
+                            <div class="flex-between" style="margin-top:4px;">
+                                <span>Total Price:</span>
+                                <strong style="color:var(--success);font-size:20px;">${formatCurrency(selectedDuration.price)}</strong>
+                            </div>
+                        </div>
+                    ` : ''}
 
-    async submitAd() {
-        if (!App.isAuthenticated) {
-            showToast('Please login to create an advertisement', 'warning');
-            navigateTo('/login');
-            return;
-        }
+                    <button type="submit" class="btn btn-primary btn-block btn-lg" id="ad-submit-btn" ${!selectedDuration || images.length === 0 ? 'disabled' : ''}>
+                        <i class="fas fa-spinner fa-spin hidden" id="ad-spinner"></i>
+                        <span id="ad-text">Proceed to Payment</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+    `;
+}
 
-        const title = document.getElementById('ad-title').value.trim();
-        const description = document.getElementById('ad-description').value.trim();
-        const whatsapp = document.getElementById('ad-whatsapp').value.trim();
-        const packageType = document.getElementById('ad-package').value;
-        
-        if (!title) {
-            showToast('Advertisement title is required', 'warning');
-            return;
+async function loadPricing() {
+    advertiseState.loading = true;
+
+    try {
+        const response = await api.getPricing();
+        if (response.success) {
+            advertiseState.pricing = response.data || [];
         }
-        
-        if (!packageType) {
-            showToast('Please select a package', 'warning');
-            return;
-        }
-        
-        if (!this.imageUrl) {
-            showToast('Please upload a flyer/image', 'warning');
-            return;
-        }
-        
-        try {
-            const adData = {
-                title,
-                description: description || '',
-                whatsapp: whatsapp || '',
-                package: packageType,
-                image: this.imageUrl
-            };
-            
-            const result = await api.createAdvertisement(adData);
-            showToast('Advertisement created! Please proceed to payment.');
-            
-            // Redirect to payment
-            const paymentData = await api.initializePayment(result.advertisement.id);
-            if (paymentData.authorization_url) {
-                window.open(paymentData.authorization_url, '_blank');
-            }
-            
-            navigateTo('/profile');
-        } catch (error) {
-            showToast(error.message || 'Failed to create advertisement', 'error');
-        }
+    } catch (error) {
+        console.error('Load pricing error:', error);
+        showToast('Failed to load pricing options', 'error');
     }
-};
+
+    advertiseState.loading = false;
+    renderAdvertisePage();
+}
+
+function selectDuration(id) {
+    const duration = advertiseState.pricing.find(p => p.id === id);
+    if (duration) {
+        advertiseState.selectedDuration = duration;
+        renderAdvertisePage();
+    }
+}
+
+function handleAdImageUpload(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+        showToast('Image size must be less than 5MB', 'warning');
+        return;
+    }
+
+    // Clear previous images (ad only allows 1 image)
+    advertiseState.images = [];
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        advertiseState.images.push({
+            file: file,
+            url: e.target.result
+        });
+        renderAdvertisePage();
+    };
+    reader.readAsDataURL(file);
+
+    event.target.value = '';
+}
+
+function removeAdImage(index) {
+    advertiseState.images.splice(index, 1);
+    renderAdvertisePage();
+}
+
+async function handleAdSubmit(event) {
+    event.preventDefault();
+
+    const title = document.getElementById('ad-title').value.trim();
+    const description = document.getElementById('ad-description').value.trim();
+    const duration = advertiseState.selectedDuration;
+    const image = advertiseState.images[0];
+
+    if (!title) {
+        showToast('Please enter an advertisement title', 'warning');
+        return;
+    }
+
+    if (!duration) {
+        showToast('Please select a duration', 'warning');
+        return;
+    }
+
+    if (!image) {
+        showToast('Please upload an image', 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('ad-submit-btn');
+    const spinner = document.getElementById('ad-spinner');
+    const text = document.getElementById('ad-text');
+
+    btn.disabled = true;
+    spinner.classList.remove('hidden');
+    text.textContent = 'Creating advertisement...';
+
+    try {
+        const formData = new FormData();
+        formData.append('title', title);
+        formData.append('description', description);
+        formData.append('duration_id', duration.id);
+        formData.append('image', image.file);
+
+        const response = await api.createAdvertisement(formData);
+
+        if (response.success) {
+            const adId = response.data.advertisement.id;
+            showToast('Advertisement created! Processing payment...', 'success');
+
+            // Initialize payment
+            try {
+                const paymentResponse = await api.initializePayment(adId);
+                if (paymentResponse.success && paymentResponse.data.authorization_url) {
+                    // Redirect to Paystack
+                    window.location.href = paymentResponse.data.authorization_url;
+                } else {
+                    showToast('Failed to initialize payment. Please try again.', 'error');
+                }
+            } catch (payError) {
+                showToast(payError.message || 'Payment initialization failed', 'error');
+            }
+        }
+    } catch (error) {
+        showToast(error.message || 'Failed to create advertisement', 'error');
+    } finally {
+        btn.disabled = false;
+        spinner.classList.add('hidden');
+        text.textContent = 'Proceed to Payment';
+    }
+}
+
+// Check for payment callback
+function checkPaymentCallback() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const paymentStatus = urlParams.get('payment');
+    const reference = urlParams.get('reference');
+
+    if (paymentStatus) {
+        if (paymentStatus === 'success') {
+            showToast('Payment successful! Your advertisement is pending admin approval.', 'success');
+        } else if (paymentStatus === 'failed') {
+            showToast('Payment failed. Please try again.', 'error');
+        } else {
+            showToast('Payment verification in progress...', 'info');
+        }
+        
+        // Clean URL
+        window.history.replaceState({}, document.title, window.location.pathname + '#advertise');
+    }
+}
+
+// Call on load
+document.addEventListener('DOMContentLoaded', checkPaymentCallback);
+
+// Expose functions globally
+window.advertisePage = advertisePage;
+window.selectDuration = selectDuration;
+window.handleAdImageUpload = handleAdImageUpload;
+window.removeAdImage = removeAdImage;
+window.handleAdSubmit = handleAdSubmit;
