@@ -1,13 +1,20 @@
 const adminMiddleware = (req, res, next) => {
-    if (!req.user) {
-        return res.status(401).json({ error: 'Authentication required' });
-    }
+  // Check if user exists and is admin
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      message: 'Authentication required.'
+    });
+  }
 
-    if (!req.user.is_admin) {
-        return res.status(403).json({ error: 'Admin access required' });
-    }
+  if (!req.user.is_admin) {
+    return res.status(403).json({
+      success: false,
+      message: 'Access denied. Administrator privileges required.'
+    });
+  }
 
-    next();
+  next();
 };
 
 module.exports = adminMiddleware;
