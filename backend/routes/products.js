@@ -519,4 +519,124 @@ router.delete('/:id', authMiddleware, async (req, res) => {
     }
 
     // Delete product (cascade will delete images in database)
-   
+    const { error } = await supabase
+      .from('products')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Delete product error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to delete product'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Product deleted successfully'
+    });
+  } catch (error) {
+    console.error('Delete product error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to delete product'
+    });
+  }
+});
+
+// Mark product as sold
+router.patch('/:id/sold', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { is_sold } = req.body;
+
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid product ID'
+      });
+    }
+
+    // Check product exists and ownership
+    const { data: product, error: productError } = await supabase
+      .from('products')
+      .select('user_id')
+      .eq('id', id)
+      .single();
+
+    if (productError || !product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    // Check ownership
+    if (product.user_id !== req.user.id && !req.user.is_admin) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to update this product'
+      });
+    }
+
+    const { data: updated, error } = await supabase
+      .from('products')
+      .update({ is_sold: is_sold === true })
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (error) {
+      console.error('Update sold status error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to update product status'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Product marked as ${is_sold ? 'sold' : 'available'}`,
+      data: updated
+    });
+  } catch (error) {
+    console.error('Update sold status error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update product status'
+    });
+  }
+});
+
+// Get categories
+router.get('/categories/all', async (req, res) => {
+  try {
+    const { data: categories, error } = await supabase
+      .from('categories')
+      .select('*')
+      .eq('is_active', true)
+      .order('name');
+
+    if (error) {
+      console.error('Get categories error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch categories'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: categories
+    });
+  } catch (error) {
+    console.error('Get categories error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch categories'
+    });
+  }
+});
+
+module.exports = router;
