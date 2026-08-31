@@ -1,14 +1,7 @@
 class ApiClient {
     constructor() {
-        // Auto-detect if we're on Render or localhost
-const isProduction = window.location.hostname !== 'localhost' && 
-                     window.location.hostname !== '127.0.0.1';
-
-this.baseUrl = isProduction 
-    ? 'https://shinex-marketplace.onrender.com/api'
-    : 'http://localhost:5000/api';
-        
-        this.token = localStorage.getItem('shinex_token');
+ this.baseUrl ='https://shinex-marketplace.onrender.com/api'
+     this.token = localStorage.getItem('shinex_token');
     }
 
     setToken(token) {
