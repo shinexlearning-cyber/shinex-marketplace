@@ -1,77 +1,76 @@
-const AboutPage = {
-    render() {
-        const html = `
-            <div class="about-page">
-                <div class="page-header">
-                    <h1>About SHINEX</h1>
-                    <p>Your trusted marketplace for buying and selling</p>
+// ========================================
+// SHINEX MARKETPLACE — ABOUT PAGE
+// ========================================
+
+function aboutPage(params) {
+    const main = document.getElementById('main-content');
+    if (!main) return;
+
+    main.innerHTML = `
+        <div class="container page-container">
+            <div class="page-header">
+                <h1>About SHINEX Marketplace</h1>
+                <p>Building trust through safe and easy buying and selling</p>
+            </div>
+
+            <div class="card" style="margin-bottom:24px;">
+                <h2>Who We Are</h2>
+                <p style="margin-top:8px;color:var(--text-secondary);line-height:1.8;">
+                    SHINEX Marketplace is a peer-to-peer platform designed to connect buyers and sellers 
+                    in a safe, simple, and trustworthy environment. We believe that buying and selling 
+                    should be easy, secure, and accessible to everyone.
+                </p>
+                <p style="margin-top:12px;color:var(--text-secondary);line-height:1.8;">
+                    Whether you're a student looking to sell your used books, a small business owner 
+                    showcasing products, or someone searching for great deals, SHINEX is built for you.
+                </p>
+            </div>
+
+            <div class="card" style="margin-bottom:24px;">
+                <h2>Our Mission</h2>
+                <p style="margin-top:8px;color:var(--text-secondary);line-height:1.8;">
+                    To create a vibrant marketplace where anyone can buy and sell with confidence, 
+                    powered by technology that protects both parties and makes every transaction seamless.
+                </p>
+            </div>
+
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;">
+                <div class="card" style="text-align:center;">
+                    <i class="fas fa-shield-alt" style="font-size:32px;color:var(--primary);"></i>
+                    <h4 style="margin-top:8px;">Safe & Secure</h4>
+                    <p style="font-size:14px;color:var(--text-muted);">We prioritize your safety with secure transactions and user verification.</p>
                 </div>
-                
-                <div class="about-content">
-                    <section class="about-section">
-                        <h2>Our Mission</h2>
-                        <p>
-                            SHINEX is dedicated to creating a safe, reliable, and user-friendly marketplace 
-                            where individuals and businesses can connect to buy and sell products and services. 
-                            We believe in empowering local economies and making commerce accessible to everyone.
-                        </p>
-                    </section>
-                    
-                    <section class="about-section">
-                        <h2>What We Offer</h2>
-                        <div class="about-grid">
-                            <div class="about-item">
-                                <i class="fas fa-store"></i>
-                                <h4>Marketplace</h4>
-                                <p>Buy and sell products across multiple categories with ease.</p>
-                            </div>
-                            <div class="about-item">
-                                <i class="fas fa-ad"></i>
-                                <h4>Advertising</h4>
-                                <p>Promote your business or services to a wide audience.</p>
-                            </div>
-                            <div class="about-item">
-                                <i class="fas fa-shield-alt"></i>
-                                <h4>Safety</h4>
-                                <p>Secure transactions and reporting system for a safe experience.</p>
-                            </div>
-                            <div class="about-item">
-                                <i class="fas fa-heart"></i>
-                                <h4>Community</h4>
-                                <p>Connect with sellers and build your network on SHINEX.</p>
-                            </div>
-                        </div>
-                    </section>
-                    
-                    <section class="about-section">
-                        <h2>Why Choose SHINEX</h2>
-                        <ul class="about-list">
-                            <li>Free to list products for sale</li>
-                            <li>No hidden fees or commissions</li>
-                            <li>Direct communication with sellers via WhatsApp</li>
-                            <li>Secure payment processing through Paystack</li>
-                            <li>Featured advertising opportunities</li>
-                            <li>Mobile-friendly platform</li>
-                            <li>Verified user profiles</li>
-                            <li>Active moderation and reporting system</li>
-                        </ul>
-                    </section>
-                    
-                    <section class="about-section">
-                        <h2>Get Started</h2>
-                        <p>
-                            Join thousands of users already buying and selling on SHINEX. 
-                            Create your account today and start your marketplace journey.
-                        </p>
-                        <div class="about-actions">
-                            <button class="btn btn-primary" onclick="navigateTo('/register')">Create Account</button>
-                            <button class="btn btn-secondary" onclick="navigateTo('/contact')">Contact Us</button>
-                        </div>
-                    </section>
+                <div class="card" style="text-align:center;">
+                    <i class="fas fa-handshake" style="font-size:32px;color:var(--secondary);"></i>
+                    <h4 style="margin-top:8px;">Trusted Community</h4>
+                    <p style="font-size:14px;color:var(--text-muted);">Build trust through transparent seller information and user reporting.</p>
+                </div>
+                <div class="card" style="text-align:center;">
+                    <i class="fas fa-bolt" style="font-size:32px;color:var(--promo);"></i>
+                    <h4 style="margin-top:8px;">Fast & Easy</h4>
+                    <p style="font-size:14px;color:var(--text-muted);">List products in minutes and find what you need with powerful search.</p>
+                </div>
+                <div class="card" style="text-align:center;">
+                    <i class="fas fa-mobile-alt" style="font-size:32px;color:var(--success);"></i>
+                    <h4 style="margin-top:8px;">Mobile Friendly</h4>
+                    <p style="font-size:14px;color:var(--text-muted);">Access the marketplace anytime, anywhere from your phone.</p>
                 </div>
             </div>
-        `;
 
-        showPage(html);
-    }
-};
+            <div class="card" style="margin-top:24px;">
+                <h2>Contact Us</h2>
+                <p style="margin-top:8px;color:var(--text-secondary);">
+                    Have questions or feedback? We'd love to hear from you.
+                </p>
+                <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:16px;">
+                    <a href="#contact" class="btn btn-primary">
+                        <i class="fas fa-envelope"></i> Get in Touch
+                    </a>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Expose functions globally
+window.aboutPage = aboutPage;
