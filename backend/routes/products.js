@@ -1,266 +1,522 @@
 const express = require('express');
-const router = express.Router();
 const { supabase } = require('../supabase/client');
 const authMiddleware = require('../middleware/auth');
-const { body, validationResult } = require('express-validator');
+const { uploadMultiple } = require('../middleware/upload');
+const { uploadImage, deleteImage, deleteImages } = require('../services/cloudinary');
+const { getPagination, buildPaginationResponse, isValidUUID } = require('../utils/helpers');
+const router = express.Router();
 
-// Get all products (public)
-router.get('/', async (req, res) => {
-    try {
-        const { category, search, limit = 20, offset = 0 } = req.query;
+// Create product
+router.post('/', authMiddleware, uploadMultiple, async (req, res) => {
+  try {
+    const { name, description, price, category_id, condition, location } = req.body;
 
-        let query = supabase
-            .from('products')
-            .select(`
-                *,
-                seller:users(id, username, full_name, avatar, location),
-                category:categories(id, name)
-            `)
-            .eq('status', 'active')
-            .order('created_at', { ascending: false });
-
-        // Filter by category
-        if (category) {
-            query = query.eq('category_id', category);
-        }
-
-        // Search by name or description
-        if (search) {
-            query = query.or(`name.ilike.%${search}%,description.ilike.%${search}%`);
-        }
-
-        // Pagination
-        query = query.range(offset, offset + limit - 1);
-
-        const { data: products, error } = await query;
-
-        if (error) {
-            console.error('Error fetching products:', error);
-            return res.status(500).json({ error: 'Failed to fetch products' });
-        }
-
-        res.json({ products });
-    } catch (error) {
-        console.error('Error fetching products:', error);
-        res.status(500).json({ error: 'Server error' });
+    // Validate required fields
+    if (!name || !price || !category_id) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name, price, and category are required'
+      });
     }
+
+    if (isNaN(price) || price < 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Price must be a valid number greater than or equal to 0'
+      });
+    }
+
+    // Validate category exists
+    const { data: category, error: categoryError } = await supabase
+      .from('categories')
+      .select('id')
+      .eq('id', category_id)
+      .single();
+
+    if (categoryError || !category) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid category selected'
+      });
+    }
+
+    // Create product
+    const { data: product, error: productError } = await supabase
+      .from('products')
+      .insert([
+        {
+          user_id: req.user.id,
+          name,
+          description: description || '',
+          price: parseFloat(price),
+          category_id,
+          condition: condition || 'new',
+          location: location || ''
+        }
+      ])
+      .select('*')
+      .single();
+
+    if (productError) {
+      console.error('Create product error:', productError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to create product'
+      });
+    }
+
+    // Upload images if provided
+    let images = [];
+    if (req.files && req.files.length > 0) {
+      try {
+        // Upload images to Cloudinary
+        const uploadPromises = req.files.map((file, index) => 
+          uploadImage(file.buffer, 'shinex_products')
+        );
+        const uploadResults = await Promise.all(uploadPromises);
+
+        // Save image records
+        const imageRecords = uploadResults.map((result, index) => ({
+          product_id: product.id,
+          image_url: result.url,
+          image_public_id: result.publicId,
+          is_primary: index === 0,
+          display_order: index
+        }));
+
+        const { data: imageData, error: imageError } = await supabase
+          .from('product_images')
+          .insert(imageRecords)
+          .select('*');
+
+        if (imageError) {
+          console.error('Save images error:', imageError);
+          // Clean up uploaded images if save fails
+          await Promise.all(
+            uploadResults.map(result => deleteImage(result.publicId))
+          );
+          return res.status(500).json({
+            success: false,
+            message: 'Failed to save product images'
+          });
+        }
+
+        images = imageData || [];
+      } catch (uploadError) {
+        console.error('Image upload error:', uploadError);
+        // Delete product if image upload fails
+        await supabase.from('products').delete().eq('id', product.id);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to upload images'
+        });
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Product created successfully',
+      data: {
+        product: {
+          ...product,
+          images
+        }
+      }
+    });
+  } catch (error) {
+    console.error('Create product error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create product'
+    });
+  }
+});
+
+// Get products with filtering
+router.get('/', async (req, res) => {
+  try {
+    const { 
+      search, 
+      category, 
+      seller, 
+      page = 1, 
+      limit = 20, 
+      min_price, 
+      max_price,
+      sort = 'newest',
+      status = 'active'
+    } = req.query;
+    
+    const { offset, limit: pageLimit } = getPagination(page, limit);
+
+    // Build query
+    let query = supabase
+      .from('products')
+      .select(`
+        *,
+        user:users(id, username, full_name, avatar_url, shop_name, whatsapp, location),
+        category:categories(id, name, slug),
+        images:product_images(*)
+      `, { count: 'exact' });
+
+    // Apply filters
+    if (search) {
+      query = query.ilike('name', `%${search}%`);
+    }
+
+    if (category) {
+      query = query.eq('category_id', category);
+    }
+
+    if (seller) {
+      query = query.eq('user_id', seller);
+    }
+
+    if (min_price) {
+      query = query.gte('price', parseFloat(min_price));
+    }
+
+    if (max_price) {
+      query = query.lte('price', parseFloat(max_price));
+    }
+
+    if (status === 'active') {
+      query = query.eq('is_active', true).eq('is_sold', false);
+    } else if (status === 'all') {
+      query = query.eq('is_active', true);
+    }
+
+    // Apply sorting
+    switch (sort) {
+      case 'newest':
+        query = query.order('created_at', { ascending: false });
+        break;
+      case 'oldest':
+        query = query.order('created_at', { ascending: true });
+        break;
+      case 'price_low':
+        query = query.order('price', { ascending: true });
+        break;
+      case 'price_high':
+        query = query.order('price', { ascending: false });
+        break;
+      default:
+        query = query.order('created_at', { ascending: false });
+    }
+
+    // Apply pagination
+    query = query.range(offset, offset + pageLimit - 1);
+
+    const { data: products, error, count } = await query;
+
+    if (error) {
+      console.error('Get products error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch products'
+      });
+    }
+
+    // Format products with primary image and user info
+    const formattedProducts = (products || []).map(product => ({
+      ...product,
+      primary_image: product.images?.find(img => img.is_primary)?.image_url || 
+                     product.images?.[0]?.image_url || null,
+      seller: product.user ? {
+        id: product.user.id,
+        username: product.user.username,
+        full_name: product.user.full_name,
+        avatar_url: product.user.avatar_url,
+        shop_name: product.user.shop_name,
+        whatsapp: product.user.whatsapp,
+        location: product.user.location
+      } : null
+    }));
+
+    res.json({
+      success: true,
+      data: formattedProducts,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(pageLimit),
+        total: count || 0,
+        totalPages: Math.ceil((count || 0) / pageLimit)
+      }
+    });
+  } catch (error) {
+    console.error('Get products error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch products'
+    });
+  }
 });
 
 // Get single product
 router.get('/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
+  try {
+    const { id } = req.params;
 
-        const { data: product, error } = await supabase
-            .from('products')
-            .select(`
-                *,
-                seller:users(id, username, full_name, avatar, location, whatsapp),
-                category:categories(id, name)
-            `)
-            .eq('id', id)
-            .single();
-
-        if (error || !product) {
-            return res.status(404).json({ error: 'Product not found' });
-        }
-
-        // Increment view count
-        await supabase
-            .from('products')
-            .update({ views: (product.views || 0) + 1 })
-            .eq('id', id);
-
-        res.json({ product });
-    } catch (error) {
-        console.error('Error fetching product:', error);
-        res.status(500).json({ error: 'Server error' });
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid product ID'
+      });
     }
+
+    const { data: product, error } = await supabase
+      .from('products')
+      .select(`
+        *,
+        user:users(id, username, full_name, email, phone, bio, location, whatsapp, avatar_url, shop_name, shop_description),
+        category:categories(id, name, slug),
+        images:product_images(*)
+      `)
+      .eq('id', id)
+      .single();
+
+    if (error || !product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    // Increment view count
+    await supabase
+      .from('products')
+      .update({ views_count: (product.views_count || 0) + 1 })
+      .eq('id', id);
+
+    // Format product
+    const formattedProduct = {
+      ...product,
+      primary_image: product.images?.find(img => img.is_primary)?.image_url || 
+                     product.images?.[0]?.image_url || null,
+      seller: product.user ? {
+        id: product.user.id,
+        username: product.user.username,
+        full_name: product.user.full_name,
+        email: product.user.email,
+        phone: product.user.phone,
+        bio: product.user.bio,
+        location: product.user.location,
+        whatsapp: product.user.whatsapp,
+        avatar_url: product.user.avatar_url,
+        shop_name: product.user.shop_name,
+        shop_description: product.user.shop_description
+      } : null
+    };
+
+    res.json({
+      success: true,
+      data: formattedProduct
+    });
+  } catch (error) {
+    console.error('Get product error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch product'
+    });
+  }
 });
 
-// Create product (authenticated)
-router.post('/', authMiddleware, [
-    body('name').notEmpty().withMessage('Product name is required'),
-    body('price').isNumeric().withMessage('Price must be a number'),
-    body('category_id').notEmpty().withMessage('Category is required'),
-    body('condition').isIn(['New', 'Used']).withMessage('Condition must be New or Used')
-], async (req, res) => {
-    try {
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-            return res.status(400).json({ errors: errors.array() });
-        }
+// Update product
+router.put('/:id', authMiddleware, uploadMultiple, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description, price, category_id, condition, location } = req.body;
 
-        const {
-            name,
-            price,
-            description,
-            category_id,
-            location,
-            condition,
-            images = []
-        } = req.body;
-
-        const { data: product, error } = await supabase
-            .from('products')
-            .insert([{
-                name,
-                price: parseFloat(price),
-                description,
-                category_id,
-                location,
-                condition,
-                images,
-                seller_id: req.user.id,
-                status: 'active'
-            }])
-            .select(`
-                *,
-                seller:users(id, username, full_name, avatar)
-            `)
-            .single();
-
-        if (error) {
-            console.error('Error creating product:', error);
-            return res.status(500).json({ error: 'Failed to create product' });
-        }
-
-        res.status(201).json({ product });
-    } catch (error) {
-        console.error('Error creating product:', error);
-        res.status(500).json({ error: 'Server error' });
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid product ID'
+      });
     }
-});
 
-// Update product (authenticated)
-router.put('/:id', authMiddleware, [
-    body('name').optional().notEmpty().withMessage('Product name cannot be empty'),
-    body('price').optional().isNumeric().withMessage('Price must be a number'),
-    body('condition').optional().isIn(['New', 'Used']).withMessage('Condition must be New or Used'),
-    body('status').optional().isIn(['active', 'sold', 'inactive']).withMessage('Invalid status')
-], async (req, res) => {
-    try {
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-            return res.status(400).json({ errors: errors.array() });
-        }
+    // Check product exists and ownership
+    const { data: existingProduct, error: productError } = await supabase
+      .from('products')
+      .select('*')
+      .eq('id', id)
+      .single();
 
-        const { id } = req.params;
-        const updates = req.body;
-
-        // Check if product exists and belongs to user
-        const { data: existing, error: fetchError } = await supabase
-            .from('products')
-            .select('seller_id')
-            .eq('id', id)
-            .single();
-
-        if (fetchError || !existing) {
-            return res.status(404).json({ error: 'Product not found' });
-        }
-
-        if (existing.seller_id !== req.user.id) {
-            return res.status(403).json({ error: 'You can only edit your own products' });
-        }
-
-        // Remove fields that shouldn't be updated
-        delete updates.seller_id;
-        delete updates.created_at;
-        delete updates.views;
-
-        // Parse price if present
-        if (updates.price) {
-            updates.price = parseFloat(updates.price);
-        }
-
-        const { data: product, error } = await supabase
-            .from('products')
-            .update({
-                ...updates,
-                updated_at: new Date().toISOString()
-            })
-            .eq('id', id)
-            .select(`
-                *,
-                seller:users(id, username, full_name, avatar)
-            `)
-            .single();
-
-        if (error) {
-            console.error('Error updating product:', error);
-            return res.status(500).json({ error: 'Failed to update product' });
-        }
-
-        res.json({ product });
-    } catch (error) {
-        console.error('Error updating product:', error);
-        res.status(500).json({ error: 'Server error' });
+    if (productError || !existingProduct) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
     }
-});
 
-// Delete product (authenticated)
-router.delete('/:id', authMiddleware, async (req, res) => {
-    try {
-        const { id } = req.params;
+    // Check ownership
+    if (existingProduct.user_id !== req.user.id && !req.user.is_admin) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to edit this product'
+      });
+    }
 
-        // Check if product exists and belongs to user
-        const { data: existing, error: fetchError } = await supabase
-            .from('products')
-            .select('seller_id')
-            .eq('id', id)
-            .single();
+    // Validate category if provided
+    if (category_id) {
+      const { data: category, error: catError } = await supabase
+        .from('categories')
+        .select('id')
+        .eq('id', category_id)
+        .single();
 
-        if (fetchError || !existing) {
-            return res.status(404).json({ error: 'Product not found' });
-        }
+      if (catError || !category) {
+        return res.status(400).json({
+          success: false,
+          message: 'Invalid category'
+        });
+      }
+    }
 
-        if (existing.seller_id !== req.user.id) {
-            return res.status(403).json({ error: 'You can only delete your own products' });
-        }
+    // Build updates
+    const updates = {};
+    if (name) updates.name = name;
+    if (description !== undefined) updates.description = description;
+    if (price) updates.price = parseFloat(price);
+    if (category_id) updates.category_id = category_id;
+    if (condition) updates.condition = condition;
+    if (location !== undefined) updates.location = location;
 
-        const { error } = await supabase
-            .from('products')
+    // Update product
+    const { data: product, error } = await supabase
+      .from('products')
+      .update(updates)
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (error) {
+      console.error('Update product error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to update product'
+      });
+    }
+
+    // Handle new images if uploaded
+    let images = [];
+    if (req.files && req.files.length > 0) {
+      try {
+        // Delete old images
+        const { data: oldImages } = await supabase
+          .from('product_images')
+          .select('image_public_id')
+          .eq('product_id', id);
+
+        if (oldImages && oldImages.length > 0) {
+          await Promise.all(
+            oldImages.map(img => deleteImage(img.image_public_id))
+          );
+          await supabase
+            .from('product_images')
             .delete()
-            .eq('id', id);
-
-        if (error) {
-            console.error('Error deleting product:', error);
-            return res.status(500).json({ error: 'Failed to delete product' });
+            .eq('product_id', id);
         }
 
-        res.json({ message: 'Product deleted successfully' });
-    } catch (error) {
-        console.error('Error deleting product:', error);
-        res.status(500).json({ error: 'Server error' });
+        // Upload new images
+        const uploadPromises = req.files.map((file, index) => 
+          uploadImage(file.buffer, 'shinex_products')
+        );
+        const uploadResults = await Promise.all(uploadPromises);
+
+        const imageRecords = uploadResults.map((result, index) => ({
+          product_id: id,
+          image_url: result.url,
+          image_public_id: result.publicId,
+          is_primary: index === 0,
+          display_order: index
+        }));
+
+        const { data: imageData } = await supabase
+          .from('product_images')
+          .insert(imageRecords)
+          .select('*');
+
+        images = imageData || [];
+      } catch (uploadError) {
+        console.error('Image upload error:', uploadError);
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to upload new images'
+        });
+      }
+    } else {
+      // Get existing images
+      const { data: existingImages } = await supabase
+        .from('product_images')
+        .select('*')
+        .eq('product_id', id);
+      images = existingImages || [];
     }
-});
 
-// Get products by seller
-router.get('/seller/:userId', async (req, res) => {
-    try {
-        const { userId } = req.params;
-        const { status = 'active' } = req.query;
-
-        const { data: products, error } = await supabase
-            .from('products')
-            .select(`
-                *,
-                category:categories(id, name)
-            `)
-            .eq('seller_id', userId)
-            .eq('status', status)
-            .order('created_at', { ascending: false });
-
-        if (error) {
-            console.error('Error fetching seller products:', error);
-            return res.status(500).json({ error: 'Failed to fetch products' });
+    res.json({
+      success: true,
+      message: 'Product updated successfully',
+      data: {
+        product: {
+          ...product,
+          images
         }
-
-        res.json({ products });
-    } catch (error) {
-        console.error('Error fetching seller products:', error);
-        res.status(500).json({ error: 'Server error' });
-    }
+      }
+    });
+  } catch (error) {
+    console.error('Update product error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update product'
+    });
+  }
 });
 
-module.exports = router;
+// Delete product
+router.delete('/:id', authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!isValidUUID(id)) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid product ID'
+      });
+    }
+
+    // Check product exists and ownership
+    const { data: product, error: productError } = await supabase
+      .from('products')
+      .select('user_id')
+      .eq('id', id)
+      .single();
+
+    if (productError || !product) {
+      return res.status(404).json({
+        success: false,
+        message: 'Product not found'
+      });
+    }
+
+    // Check ownership
+    if (product.user_id !== req.user.id && !req.user.is_admin) {
+      return res.status(403).json({
+        success: false,
+        message: 'You do not have permission to delete this product'
+      });
+    }
+
+    // Get and delete images from Cloudinary
+    const { data: images } = await supabase
+      .from('product_images')
+      .select('image_public_id')
+      .eq('product_id', id);
+
+    if (images && images.length > 0) {
+      await Promise.all(
+        images.map(img => deleteImage(img.image_public_id))
+      );
+    }
+
+    // Delete product (cascade will delete images in database)
+   
