@@ -3,98 +3,117 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const path = require('path');
+const { supabase } = require('./supabase/client');
 
 // Import routes
 const authRoutes = require('./routes/auth');
-const productRoutes = require('./routes/products');
 const userRoutes = require('./routes/users');
+const productRoutes = require('./routes/products');
 const favoriteRoutes = require('./routes/favorites');
 const advertisementRoutes = require('./routes/advertisements');
 const reportRoutes = require('./routes/reports');
-const adminRoutes = require('./routes/admin');
 const contactRoutes = require('./routes/contact');
 
+// Import admin routes
+const adminUserRoutes = require('./routes/admin/users');
+const adminProductRoutes = require('./routes/admin/products');
+const adminCategoryRoutes = require('./routes/admin/categories');
+const adminAdRoutes = require('./routes/admin/advertisements');
+const adminDurationRoutes = require('./routes/admin/durations');
+const adminPaymentRoutes = require('./routes/admin/payments');
+const adminReportRoutes = require('./routes/admin/reports');
+const adminContactRoutes = require('./routes/admin/contact');
+
 const app = express();
-const PORT = process.env.PORT || 5000;
 
 // Security middleware
-app.use(helmet({
-    crossOriginResourcePolicy: { policy: "cross-origin" }
-}));
+app.use(helmet());
 
-// CORS - Allow frontend domains
+// CORS configuration
 const allowedOrigins = [
-    'http://localhost:3000',
-    'http://localhost:5000',
-    'https://shinex.onrender.com',
-    process.env.FRONTEND_URL
-].filter(Boolean);
+  process.env.FRONTEND_URL,
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:5000'
+];
 
 app.use(cors({
-    origin: allowedOrigins,
-    credentials: true
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
+  credentials: true
 }));
 
 // Rate limiting
 const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 100
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // Limit each IP to 100 requests per windowMs
+  message: 'Too many requests from this IP, please try again later.'
 });
-app.use('/api/', limiter);
+app.use('/api', limiter);
 
-// Body parser middleware
+// Body parsing middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Serve static files from frontend
-const frontendPath = path.join(__dirname, '..', 'frontend');
-console.log(`Serving frontend from: ${frontendPath}`);
-app.use(express.static(frontendPath));
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({
+    success: true,
+    message: 'SHINEX Marketplace API is running'
+  });
+});
 
-// Routes
+// API Routes
 app.use('/api/auth', authRoutes);
-app.use('/api/products', productRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/products', productRoutes);
 app.use('/api/favorites', favoriteRoutes);
 app.use('/api/advertisements', advertisementRoutes);
 app.use('/api/reports', reportRoutes);
-app.use('/api/admin', adminRoutes);
 app.use('/api/contact', contactRoutes);
 
-// Health check
-app.get('/api/health', (req, res) => {
-    res.status(200).json({ status: 'OK', message: 'SHINEX API is running', timestamp: new Date().toISOString() });
-});
-
-// Serve index.html for all non-API routes (SPA)
-app.get('*', (req, res) => {
-    if (req.path.startsWith('/api/')) {
-        return res.status(404).json({ error: 'API endpoint not found' });
-    }
-    const indexPath = path.join(__dirname, '..', 'frontend', 'index.html');
-    console.log(`Serving index.html from: ${indexPath}`);
-    res.sendFile(indexPath, (err) => {
-        if (err) {
-            console.error('Error serving index.html:', err);
-            res.status(500).send('Error loading application');
-        }
-    });
-});
+// Admin routes
+app.use('/api/admin/users', adminUserRoutes);
+app.use('/api/admin/products', adminProductRoutes);
+app.use('/api/admin/categories', adminCategoryRoutes);
+app.use('/api/admin/advertisements', adminAdRoutes);
+app.use('/api/admin/durations', adminDurationRoutes);
+app.use('/api/admin/payments', adminPaymentRoutes);
+app.use('/api/admin/reports', adminReportRoutes);
+app.use('/api/admin/contact', adminContactRoutes);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-    console.error('Error:', err.stack);
-    res.status(err.status || 500).json({
-        error: process.env.NODE_ENV === 'production' ? 'Internal server error' : err.message
-    });
+  console.error('Error:', err);
+  
+  const statusCode = err.statusCode || 500;
+  const message = err.message || 'Internal Server Error';
+  
+  res.status(statusCode).json({
+    success: false,
+    message: message,
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  });
+});
+
+// 404 handler
+app.use((req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'Route not found'
+  });
 });
 
 // Start server
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`SHINEX backend running on port ${PORT}`);
-    console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-    console.log(`Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:5000'}`);
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+  console.log(`🚀 SHINEX Marketplace API running on port ${PORT}`);
+  console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
 });
-
-module.exports = app;
