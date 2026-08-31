@@ -1,36 +1,41 @@
+// ========================================
+// SHINEX MARKETPLACE — API CLIENT
+// ========================================
+
+// Determine API base URL
+const API_BASE = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? 'http://localhost:5000/api'
+    : 'https://shinex-marketplace.onrender.com/api';
+
 class ApiClient {
-    constructor() {
- this.baseUrl ='https://shinex-marketplace.onrender.com/api'
-     this.token = localStorage.getItem('shinex_token');
+    constructor(baseURL = API_BASE) {
+        this.baseURL = baseURL;
     }
 
-    setToken(token) {
-        this.token = token;
-        if (token) {
-            localStorage.setItem('shinex_token', token);
-        } else {
-            localStorage.removeItem('shinex_token');
-        }
-    }
-
-    getHeaders() {
-        const headers = {
-            'Content-Type': 'application/json'
-        };
-        if (this.token) {
-            headers['Authorization'] = `Bearer ${this.token}`;
-        }
-        return headers;
-    }
-
+    /**
+     * Make API request
+     */
     async request(endpoint, options = {}) {
-        const url = `${this.baseUrl}${endpoint}`;
+        const url = `${this.baseURL}${endpoint}`;
+        const token = localStorage.getItem('token');
+
+        const headers = {
+            'Content-Type': 'application/json',
+            ...options.headers
+        };
+
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        // If FormData, remove Content-Type header (browser will set with boundary)
+        if (options.body instanceof FormData) {
+            delete headers['Content-Type'];
+        }
+
         const config = {
             ...options,
-            headers: {
-                ...this.getHeaders(),
-                ...options.headers
-            }
+            headers
         };
 
         try {
@@ -38,353 +43,414 @@ class ApiClient {
             const data = await response.json();
 
             if (!response.ok) {
+                // Handle 401 Unauthorized
                 if (response.status === 401) {
-                    this.setToken(null);
-                    window.location.href = '/login';
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
+                    if (window.location.pathname !== '/login' && window.location.pathname !== '/register') {
+                        window.location.hash = '#login';
+                    }
                 }
-                throw new Error(data.error || data.message || 'Request failed');
+
+                throw {
+                    status: response.status,
+                    message: data.message || 'An error occurred',
+                    data: data
+                };
             }
 
             return data;
         } catch (error) {
-            console.error('API Error:', error);
+            if (error.message === 'Failed to fetch') {
+                throw {
+                    status: 0,
+                    message: 'Network error. Please check your internet connection.'
+                };
+            }
             throw error;
         }
     }
 
-    // ===== AUTH =====
-    async register(userData) {
-        const data = await this.request('/auth/register', {
+    // ---------- AUTH ----------
+    register(data) {
+        return this.request('/auth/register', {
             method: 'POST',
-            body: JSON.stringify(userData)
+            body: JSON.stringify(data)
         });
-        if (data.token) {
-            this.setToken(data.token);
-        }
-        return data;
     }
 
-    async login(credentials) {
-        const data = await this.request('/auth/login', {
+    login(data) {
+        return this.request('/auth/login', {
             method: 'POST',
-            body: JSON.stringify(credentials)
+            body: JSON.stringify(data)
         });
-        if (data.token) {
-            this.setToken(data.token);
-        }
-        return data;
     }
 
-    async getCurrentUser() {
+    getMe() {
         return this.request('/auth/me');
     }
 
-    logout() {
-        this.setToken(null);
+    forgotPassword(email) {
+        return this.request('/auth/forgot-password', {
+            method: 'POST',
+            body: JSON.stringify({ email })
+        });
     }
 
-    // ===== PRODUCTS =====
-    async getProducts(params = {}) {
+    resetPassword(data) {
+        return this.request('/auth/reset-password', {
+            method: 'POST',
+            body: JSON.stringify(data)
+        });
+    }
+
+    // ---------- USERS ----------
+    getProfile(username) {
+        return this.request(`/users/${username}`);
+    }
+
+    getShop(username, page = 1, limit = 20) {
+        return this.request(`/users/${username}/shop?page=${page}&limit=${limit}`);
+    }
+
+    updateProfile(data) {
+        return this.request('/users/me', {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+    }
+
+    uploadAvatar(formData) {
+        return this.request('/users/me/avatar', {
+            method: 'POST',
+            body: formData
+        });
+    }
+
+    // ---------- PRODUCTS ----------
+    getProducts(params = {}) {
         const query = new URLSearchParams(params).toString();
         return this.request(`/products?${query}`);
     }
 
-    async getProduct(id) {
+    getProduct(id) {
         return this.request(`/products/${id}`);
     }
 
-    async createProduct(productData) {
+    createProduct(formData) {
         return this.request('/products', {
             method: 'POST',
-            body: JSON.stringify(productData)
+            body: formData
         });
     }
 
-    async updateProduct(id, productData) {
+    updateProduct(id, formData) {
         return this.request(`/products/${id}`, {
             method: 'PUT',
-            body: JSON.stringify(productData)
+            body: formData
         });
     }
 
-    async deleteProduct(id) {
+    deleteProduct(id) {
         return this.request(`/products/${id}`, {
             method: 'DELETE'
         });
     }
 
-    async getSellerProducts(userId, status = 'active') {
-        return this.request(`/products/seller/${userId}?status=${status}`);
-    }
-
-    // ===== USERS =====
-    async getUser(username) {
-        return this.request(`/users/${username}`);
-    }
-
-    async updateProfile(profileData) {
-        return this.request('/users/profile', {
-            method: 'PUT',
-            body: JSON.stringify(profileData)
+    markSold(id, isSold) {
+        return this.request(`/products/${id}/sold`, {
+            method: 'PATCH',
+            body: JSON.stringify({ is_sold: isSold })
         });
     }
 
-    async changePassword(passwordData) {
-        return this.request('/users/change-password', {
-            method: 'POST',
-            body: JSON.stringify(passwordData)
-        });
+    getCategories() {
+        return this.request('/products/categories/all');
     }
 
-    async deleteAccount() {
-        return this.request('/users/account', {
-            method: 'DELETE'
-        });
-    }
-
-    // ===== FAVORITES =====
-    async getFavorites() {
-        return this.request('/favorites');
-    }
-
-    async toggleProductFavorite(productId) {
+    // ---------- FAVORITES ----------
+    favoriteProduct(productId) {
         return this.request(`/favorites/product/${productId}`, {
             method: 'POST'
         });
     }
 
-    async toggleSellerFavorite(sellerId) {
+    unfavoriteProduct(productId) {
+        return this.request(`/favorites/product/${productId}`, {
+            method: 'DELETE'
+        });
+    }
+
+    favoriteSeller(sellerId) {
         return this.request(`/favorites/seller/${sellerId}`, {
             method: 'POST'
         });
     }
 
-    async checkProductFavorite(productId) {
-        return this.request(`/favorites/check/product/${productId}`);
-    }
-
-    async checkSellerFavorite(sellerId) {
-        return this.request(`/favorites/check/seller/${sellerId}`);
-    }
-
-    // ===== ADVERTISEMENTS =====
-    async getAdvertisements() {
-        return this.request('/advertisements');
-    }
-
-    async getMyAdvertisements() {
-        return this.request('/advertisements/my');
-    }
-
-    async createAdvertisement(adData) {
-        return this.request('/advertisements', {
-            method: 'POST',
-            body: JSON.stringify(adData)
+    unfavoriteSeller(sellerId) {
+        return this.request(`/favorites/seller/${sellerId}`, {
+            method: 'DELETE'
         });
     }
 
-    async initializePayment(adId) {
-        return this.request(`/advertisements/${adId}/pay`, {
+    getFavoriteProducts(page = 1, limit = 20) {
+        return this.request(`/favorites/products?page=${page}&limit=${limit}`);
+    }
+
+    getFavoriteSellers(page = 1, limit = 20) {
+        return this.request(`/favorites/sellers?page=${page}&limit=${limit}`);
+    }
+
+    checkProductFavorite(productId) {
+        return this.request(`/favorites/product/${productId}/check`);
+    }
+
+    checkSellerFavorite(sellerId) {
+        return this.request(`/favorites/seller/${sellerId}/check`);
+    }
+
+    // ---------- ADVERTISEMENTS ----------
+    getPricing() {
+        return this.request('/advertisements/pricing');
+    }
+
+    createAdvertisement(formData) {
+        return this.request('/advertisements', {
+            method: 'POST',
+            body: formData
+        });
+    }
+
+    initializePayment(id) {
+        return this.request(`/advertisements/${id}/pay`, {
             method: 'POST'
         });
     }
 
-    async verifyPayment(reference) {
-        return this.request(`/advertisements/verify/${reference}`);
+    getPaymentStatus(id) {
+        return this.request(`/advertisements/${id}/payment`);
     }
 
-    async updateAdvertisement(id, adData) {
-        return this.request(`/advertisements/${id}`, {
-            method: 'PUT',
-            body: JSON.stringify(adData)
-        });
+    getMyAdvertisements(page = 1, limit = 20) {
+        return this.request(`/advertisements/my?page=${page}&limit=${limit}`);
     }
 
-    async deleteAdvertisement(id) {
-        return this.request(`/advertisements/${id}`, {
-            method: 'DELETE'
-        });
-    }
-
-    // ===== REPORTS =====
-    async createReport(reportData) {
+    // ---------- REPORTS ----------
+    createReport(data) {
         return this.request('/reports', {
             method: 'POST',
-            body: JSON.stringify(reportData)
+            body: JSON.stringify(data)
         });
     }
 
-    async getMyReports() {
-        return this.request('/reports/my');
+    getMyReports(page = 1, limit = 20) {
+        return this.request(`/reports/my?page=${page}&limit=${limit}`);
     }
 
-    // ===== CONTACT =====
-    async sendContactMessage(messageData) {
+    // ---------- CONTACT ----------
+    sendContact(data) {
         return this.request('/contact', {
             method: 'POST',
-            body: JSON.stringify(messageData)
+            body: JSON.stringify(data)
         });
     }
 
-    // ===== ADMIN =====
-    async getAdminStats() {
-        return this.request('/admin/stats');
+    getContactInfo() {
+        return this.request('/contact/info');
     }
 
-    async getAdminUsers(params = {}) {
+    // ---------- ADMIN ----------
+    // Users
+    getAdminUsers(params = {}) {
         const query = new URLSearchParams(params).toString();
         return this.request(`/admin/users?${query}`);
     }
 
-    async suspendUser(userId) {
-        return this.request(`/admin/users/${userId}/suspend`, {
-            method: 'PUT'
+    getAdminUser(id) {
+        return this.request(`/admin/users/${id}`);
+    }
+
+    suspendUser(id, reason) {
+        return this.request(`/admin/users/${id}/suspend`, {
+            method: 'PATCH',
+            body: JSON.stringify({ reason })
         });
     }
 
-    async unsuspendUser(userId) {
-        return this.request(`/admin/users/${userId}/unsuspend`, {
-            method: 'PUT'
+    unsuspendUser(id) {
+        return this.request(`/admin/users/${id}/unsuspend`, {
+            method: 'PATCH'
         });
     }
 
-    async deleteUser(userId) {
-        return this.request(`/admin/users/${userId}`, {
+    deleteUser(id) {
+        return this.request(`/admin/users/${id}`, {
             method: 'DELETE'
         });
     }
 
-    async getAdminProducts(params = {}) {
+    // Products (Admin)
+    getAdminProducts(params = {}) {
         const query = new URLSearchParams(params).toString();
         return this.request(`/admin/products?${query}`);
     }
 
-    async deleteAdminProduct(productId) {
-        return this.request(`/admin/products/${productId}`, {
+    getAdminProduct(id) {
+        return this.request(`/admin/products/${id}`);
+    }
+
+    deleteAdminProduct(id) {
+        return this.request(`/admin/products/${id}`, {
             method: 'DELETE'
         });
     }
 
-    async getAdminCategories() {
+    // Categories (Admin)
+    getAdminCategories() {
         return this.request('/admin/categories');
     }
 
-    async createCategory(name) {
+    createCategory(data) {
         return this.request('/admin/categories', {
             method: 'POST',
-            body: JSON.stringify({ name })
+            body: JSON.stringify(data)
         });
     }
 
-    async updateCategory(id, name) {
+    updateCategory(id, data) {
         return this.request(`/admin/categories/${id}`, {
             method: 'PUT',
-            body: JSON.stringify({ name })
+            body: JSON.stringify(data)
         });
     }
 
-    async deleteCategory(id) {
+    deleteCategory(id) {
         return this.request(`/admin/categories/${id}`, {
             method: 'DELETE'
         });
     }
 
-    async getAdminAdvertisements(params = {}) {
+    // Advertisements (Admin)
+    getAdminAdvertisements(params = {}) {
         const query = new URLSearchParams(params).toString();
         return this.request(`/admin/advertisements?${query}`);
     }
 
-    async approveAdvertisement(id) {
+    getAdminAdvertisement(id) {
+        return this.request(`/admin/advertisements/${id}`);
+    }
+
+    approveAdvertisement(id) {
         return this.request(`/admin/advertisements/${id}/approve`, {
-            method: 'PUT'
+            method: 'PATCH'
         });
     }
 
-    async rejectAdvertisement(id) {
+    rejectAdvertisement(id, reason) {
         return this.request(`/admin/advertisements/${id}/reject`, {
-            method: 'PUT'
+            method: 'PATCH',
+            body: JSON.stringify({ reason })
         });
     }
 
-    async pauseAdvertisement(id) {
+    pauseAdvertisement(id) {
         return this.request(`/admin/advertisements/${id}/pause`, {
-            method: 'PUT'
+            method: 'PATCH'
         });
     }
 
-    async deleteAdminAdvertisement(id) {
+    deleteAdminAdvertisement(id) {
         return this.request(`/admin/advertisements/${id}`, {
             method: 'DELETE'
         });
     }
 
-    async getAdminReports(params = {}) {
-        const query = new URLSearchParams(params).toString();
-        return this.request(`/admin/reports?${query}`);
+    // Durations (Admin)
+    getAdminDurations() {
+        return this.request('/admin/durations');
     }
 
-    async resolveReport(id) {
-        return this.request(`/admin/reports/${id}/resolve`, {
-            method: 'PUT'
+    createDuration(data) {
+        return this.request('/admin/durations', {
+            method: 'POST',
+            body: JSON.stringify(data)
         });
     }
 
-    async dismissReport(id) {
-        return this.request(`/admin/reports/${id}/dismiss`, {
-            method: 'PUT'
+    updateDuration(id, data) {
+        return this.request(`/admin/durations/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
         });
     }
 
-    async getAdminPayments(params = {}) {
+    deleteDuration(id) {
+        return this.request(`/admin/durations/${id}`, {
+            method: 'DELETE'
+        });
+    }
+
+    // Payments (Admin)
+    getAdminPayments(params = {}) {
         const query = new URLSearchParams(params).toString();
         return this.request(`/admin/payments?${query}`);
     }
 
-    async getContactMessages(params = {}) {
-        const query = new URLSearchParams(params).toString();
-        return this.request(`/contact?${query}`);
+    getAdminPayment(id) {
+        return this.request(`/admin/payments/${id}`);
     }
 
-    async updateContactMessageStatus(id, status) {
-        return this.request(`/contact/${id}/status`, {
-            method: 'PUT',
+    getPaymentStats() {
+        return this.request('/admin/payments/stats');
+    }
+
+    // Reports (Admin)
+    getAdminReports(params = {}) {
+        const query = new URLSearchParams(params).toString();
+        return this.request(`/admin/reports?${query}`);
+    }
+
+    getAdminReport(id) {
+        return this.request(`/admin/reports/${id}`);
+    }
+
+    resolveReport(id, notes) {
+        return this.request(`/admin/reports/${id}/resolve`, {
+            method: 'PATCH',
+            body: JSON.stringify({ admin_notes: notes })
+        });
+    }
+
+    dismissReport(id, notes) {
+        return this.request(`/admin/reports/${id}/dismiss`, {
+            method: 'PATCH',
+            body: JSON.stringify({ admin_notes: notes })
+        });
+    }
+
+    // Contact (Admin)
+    getAdminContactMessages(params = {}) {
+        const query = new URLSearchParams(params).toString();
+        return this.request(`/admin/contact?${query}`);
+    }
+
+    getAdminContactMessage(id) {
+        return this.request(`/admin/contact/${id}`);
+    }
+
+    updateContactStatus(id, status) {
+        return this.request(`/admin/contact/${id}/status`, {
+            method: 'PATCH',
             body: JSON.stringify({ status })
         });
     }
 
-    async deleteContactMessage(id) {
-        return this.request(`/contact/${id}`, {
+    deleteContactMessage(id) {
+        return this.request(`/admin/contact/${id}`, {
             method: 'DELETE'
         });
     }
 }
 
-function setupRoutes() {
-    router.addRoute('', loadHome);
-    router.addRoute('home', loadHome);
-    router.addRoute('shop/:username', loadShop);
-    router.addRoute('product/:id', loadProduct);
-    router.addRoute('favorites', loadFavorites);
-    router.addRoute('sell', loadSell);
-    router.addRoute('activity', loadActivity);
-    router.addRoute('profile', loadProfile);
-    router.addRoute('advertise', loadAdvertise);
-    router.addRoute('admin', loadAdmin);
-    router.addRoute('contact', loadContact);
-    router.addRoute('about', loadAbout);
-    router.addRoute('privacy-policy', loadPrivacy);
-    router.addRoute('terms', loadTerms);
-    router.addRoute('login', loadLogin);
-    router.addRoute('register', loadRegister);
-    router.addRoute('settings', loadSettings);  // <-- ADD THIS LINE
-    router.addRoute('*', (path) => {
-        showPage(`<div class="container"><h1>404 - Page Not Found</h1><p>The page "${path}" does not exist.</p><a href="/">Go Home</a></div>`);
-    });
-}
-
-function loadSettings() {
-    SettingsPage.render();
-}
-
-// Create global instance
+// Create and export API instance
 const api = new ApiClient();
