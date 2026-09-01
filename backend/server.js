@@ -3,8 +3,9 @@ const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
-const path = require('path');
 const { supabase } = require('./supabase/client');
+const path = require('path');
+const fs = require('fs');
 
 // Import routes
 const authRoutes = require('./routes/auth');
