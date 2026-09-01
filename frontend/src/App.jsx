@@ -1428,16 +1428,16 @@ function ProfilePage({ go }) {
         shop_name: user.shop_name || "",
       });
       setStatsLoading(true);
-      Promise.all([
-        api(`/users/${user.username}/shop?limit=1`, { auth: false }).catch(() => null),
-        api(`/favorites/products?limit=1`).catch(() => null),
-      ]).then(([shopRes, favRes]) => {
-        setStats({
-          listings: shopRes?.data?.shop?.product_count ?? shopRes?.data?.pagination?.total ?? null,
-          favorites: favRes?.data ? favRes.pagination?.total ?? favRes.data.length : null,
-        });
-        setStatsLoading(false);
-      });
+     api('/users/me/stats')
+  .then(({ data }) => {
+    setStats({
+      listings: data.products,
+      favorites: data.favorites,
+      views: data.views
+    });
+    setStatsLoading(false);
+  })
+  .catch(() => setStatsLoading(false));
     }
   }, [user]);
 
