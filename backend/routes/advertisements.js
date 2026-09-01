@@ -37,6 +37,49 @@ router.get('/pricing', async (req, res) => {
   }
 });
 
+// GET /api/advertisements/active - Public active advertisements
+router.get('/active', async (req, res) => {
+  try {
+    const now = new Date().toISOString();
+    const { data: ads, error } = await supabase
+      .from('advertisements')
+      .select(`
+        id,
+        title,
+        description,
+        image_url,
+        payment_status,
+        approval_status,
+        expires_at,
+        user:users(id, username, shop_name)
+      `)
+      .eq('payment_status', 'paid')
+      .eq('approval_status', 'approved')
+      .gt('expires_at', now)
+      .order('created_at', { ascending: false })
+      .limit(10); // Limit to 10 active ads
+
+    if (error) {
+      console.error('Get active ads error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch active advertisements'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: ads || []
+    });
+  } catch (error) {
+    console.error('Get active ads error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch active advertisements'
+    });
+  }
+});
+
 // Create advertisement
 router.post('/', authMiddleware, uploadSingle, async (req, res) => {
   try {
