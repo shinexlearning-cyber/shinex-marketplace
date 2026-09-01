@@ -4,7 +4,7 @@ import {
   Camera, X, ChevronLeft, ChevronRight, Menu, Home, Store, Megaphone,
   LayoutDashboard, Users, Package, Tag, CreditCard, Flag, Mail,
   Trash2, Edit2, ChevronDown, AlertCircle, CheckCircle, Info, Loader2,
-  Star, ArrowRight, Eye, EyeOff, ShoppingBag
+  Eye, EyeOff, ShoppingBag, Check, Pause, Ban
 } from "lucide-react";
 
 /* ============================================================
@@ -12,6 +12,27 @@ import {
    Single-file React application with client-side state routing
    (no react-router available in this environment — page switches
    are handled through the `nav` state below).
+
+   Wired to the real SHINEX backend (Express + Supabase). Every
+   endpoint below matches backend/API_DOCUMENTATION.md and the
+   route files exactly — nothing here is invented. Notable real
+   constraints reflected in this file:
+   - All responses are enveloped as { success, message, data }.
+     The api() helper below unwraps `data` for callers.
+   - Product creation needs a real category_id (from
+     GET /products/categories/all), not a free-text category.
+   - Favorites has no bulk "my favorite ids" endpoint, so favorite
+     state is derived from GET /favorites/products + /favorites/sellers.
+   - There is no public "active advertisements" endpoint, so the
+     homepage has no sponsored-ads rail — nothing serves that data.
+   - There is no GET /admin/stats endpoint; the admin overview is
+     composed from the totals already returned by /admin/users,
+     /admin/products, /admin/advertisements, /admin/reports and
+     /admin/payments/stats.
+   - Ad pricing is managed via /admin/durations (duration_days,
+     price, is_active) — not a bespoke "ad-pricing" resource.
+   - There's no "my profile stats" endpoint; Profile page stats are
+     derived from the shop + favorites endpoints that do exist.
    ============================================================ */
 
 const API_BASE = "https://shinex-marketplace.onrender.com/api";
@@ -26,6 +47,7 @@ const COLORS = {
 
 /* ------------------------------------------------------------
    API HELPER
+   Backend envelope: { success: boolean, message?: string, data?: any }
    ------------------------------------------------------------ */
 async function api(path, { method = "GET", body, auth = true, formData = false } = {}) {
   const headers = {};
@@ -44,17 +66,20 @@ async function api(path, { method = "GET", body, auth = true, formData = false }
   } catch (e) {
     throw new Error("Can't reach the server. Check your connection and try again.");
   }
-  let data = null;
+  let payload = null;
   try {
-    data = await res.json();
+    payload = await res.json();
   } catch (e) {
-    data = null;
+    payload = null;
   }
-  if (!res.ok) {
-    const msg = (data && (data.message || data.error)) || `Request failed (${res.status})`;
+  if (!res.ok || (payload && payload.success === false)) {
+    const msg =
+      (payload && (payload.message || (Array.isArray(payload.errors) && payload.errors[0]))) ||
+      `Request failed (${res.status})`;
     throw new Error(msg);
   }
-  return data;
+  // Return the full payload so callers can read data/pagination/message as needed.
+  return payload || {};
 }
 
 /* ------------------------------------------------------------
@@ -103,6 +128,9 @@ function ToastProvider({ children }) {
 
 /* ------------------------------------------------------------
    AUTH CONTEXT
+   Backend user fields: id, username, email, full_name, phone,
+   avatar_url, bio, location, whatsapp, shop_name,
+   shop_description, is_admin, is_suspended, created_at
    ------------------------------------------------------------ */
 const AuthContext = createContext(null);
 function useAuth() {
@@ -119,8 +147,8 @@ function AuthProvider({ children }) {
       return;
     }
     try {
-      const data = await api("/auth/me");
-      setUser(data.user || data);
+      const { data } = await api("/auth/me");
+      setUser(data.user);
     } catch (e) {
       localStorage.removeItem("shinex_token");
       setUser(null);
@@ -134,20 +162,21 @@ function AuthProvider({ children }) {
   }, [loadMe]);
 
   const login = async (email, password) => {
-    const data = await api("/auth/login", { method: "POST", body: { email, password }, auth: false });
+    const { data } = await api("/auth/login", { method: "POST", body: { email, password }, auth: false });
     if (data.token) localStorage.setItem("shinex_token", data.token);
     setUser(data.user || null);
     return data;
   };
 
   const register = async (payload) => {
-    const data = await api("/auth/register", { method: "POST", body: payload, auth: false });
+    const { data } = await api("/auth/register", { method: "POST", body: payload, auth: false });
     if (data.token) localStorage.setItem("shinex_token", data.token);
     setUser(data.user || null);
     return data;
   };
 
   const logout = () => {
+    api("/auth/logout", { method: "POST" }).catch(() => {});
     localStorage.removeItem("shinex_token");
     setUser(null);
   };
@@ -157,6 +186,36 @@ function AuthProvider({ children }) {
       {children}
     </AuthContext.Provider>
   );
+}
+
+/* ------------------------------------------------------------
+   CATEGORIES CONTEXT — GET /products/categories/all
+   { id, name, slug, description, icon, is_active }
+   ------------------------------------------------------------ */
+const CategoriesContext = createContext({ categories: [], status: "loading" });
+function useCategories() {
+  return useContext(CategoriesContext);
+}
+function CategoriesProvider({ children }) {
+  const [categories, setCategories] = useState([]);
+  const [status, setStatus] = useState("loading");
+
+  const load = useCallback(async () => {
+    setStatus("loading");
+    try {
+      const { data } = await api("/products/categories/all", { auth: false });
+      setCategories(data || []);
+      setStatus("ready");
+    } catch (e) {
+      setStatus("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  return <CategoriesContext.Provider value={{ categories, status, reload: load }}>{children}</CategoriesContext.Provider>;
 }
 
 /* ------------------------------------------------------------
@@ -226,6 +285,26 @@ function TextArea({ label, error, className = "", ...props }) {
         } ${className}`}
         {...props}
       />
+      {error && <span className="mt-1 block text-xs text-red-500">{error}</span>}
+    </label>
+  );
+}
+
+function Select({ label, error, className = "", children, ...props }) {
+  return (
+    <label className="block">
+      {label && <span className="block text-sm font-medium text-gray-700 mb-1">{label}</span>}
+      <div className="relative">
+        <select
+          className={`w-full appearance-none rounded-xl border px-3.5 py-2.5 text-[15px] outline-none transition focus:ring-2 bg-white ${
+            error ? "border-red-400 focus:ring-red-100" : "border-gray-200 focus:ring-[#5B3FC6]/20 focus:border-[#5B3FC6]"
+          } ${className}`}
+          {...props}
+        >
+          {children}
+        </select>
+        <ChevronDown size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+      </div>
       {error && <span className="mt-1 block text-xs text-red-500">{error}</span>}
     </label>
   );
@@ -336,11 +415,11 @@ function Header({ nav, go, query, setQuery, onSearchSubmit }) {
                 className="ml-1 w-9 h-9 rounded-full overflow-hidden border-2 flex items-center justify-center bg-gray-100"
                 style={{ borderColor: COLORS.primary }}
               >
-                {user.avatar ? (
-                  <img src={user.avatar} alt="" className="w-full h-full object-cover" />
+                {user.avatar_url ? (
+                  <img src={user.avatar_url} alt="" className="w-full h-full object-cover" />
                 ) : (
                   <span className="text-xs font-bold" style={{ color: COLORS.primary }}>
-                    {(user.fullName || user.username || "U").slice(0, 1).toUpperCase()}
+                    {(user.full_name || user.username || "U").slice(0, 1).toUpperCase()}
                   </span>
                 )}
               </button>
@@ -352,7 +431,7 @@ function Header({ nav, go, query, setQuery, onSearchSubmit }) {
                   <button onClick={() => { setMenuOpen(false); go("advertise"); }} className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2">
                     <Megaphone size={15} /> Advertise
                   </button>
-                  {user.role === "admin" && (
+                  {user.is_admin && (
                     <button onClick={() => { setMenuOpen(false); go("admin"); }} className="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 flex items-center gap-2">
                       <LayoutDashboard size={15} /> Admin
                     </button>
@@ -469,35 +548,32 @@ function BottomNav({ nav, go }) {
 
 /* ------------------------------------------------------------
    PRODUCT CARD
+   Product shape (list): id, name, price, primary_image, location,
+   seller { username, full_name, shop_name, avatar_url, whatsapp }
    ------------------------------------------------------------ */
-function ProductCard({ product, go, favorites, toggleFavorite }) {
-  const isFav = favorites.has(product.id || product._id);
-  const id = product.id || product._id;
+function ProductCard({ product, go, favoriteProductIds, toggleFavorite }) {
+  const id = product.id;
+  const isFav = favoriteProductIds.has(id);
+  const image = product.primary_image || (product.images && product.images[0]?.image_url);
   return (
     <div className="group rounded-2xl bg-white border border-gray-100 overflow-hidden hover:shadow-md transition-shadow">
       <button onClick={() => go("product", { id })} className="block w-full text-left">
         <div className="relative w-full aspect-square bg-gray-50 overflow-hidden">
-          {product.image || (product.images && product.images[0]) ? (
-            <img
-              src={product.image || product.images[0]}
-              alt={product.name || product.title}
-              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-            />
+          {image ? (
+            <img src={image} alt={product.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
           ) : (
             <div className="w-full h-full flex items-center justify-center text-gray-300">
               <ShoppingBag size={36} />
             </div>
           )}
-          {product.isAd && (
-            <span className="absolute top-2 left-2 text-[10px] font-bold text-white px-2 py-0.5 rounded-md" style={{ backgroundColor: COLORS.secondary }}>
-              Ad
-            </span>
+          {product.is_sold && (
+            <span className="absolute top-2 left-2 text-[10px] font-bold text-white px-2 py-0.5 rounded-md bg-gray-800/80">Sold</span>
           )}
         </div>
       </button>
       <div className="p-3">
         <button onClick={() => go("product", { id })} className="block text-left w-full">
-          <h3 className="font-medium text-sm text-gray-800 truncate">{product.name || product.title}</h3>
+          <h3 className="font-medium text-sm text-gray-800 truncate">{product.name}</h3>
         </button>
         <div className="flex items-center justify-between mt-1">
           <span className="font-bold text-[15px]" style={{ color: COLORS.secondary }}>
@@ -508,10 +584,12 @@ function ProductCard({ product, go, favorites, toggleFavorite }) {
           </button>
         </div>
         <div className="flex items-center justify-between mt-1.5 text-xs text-gray-400">
-          <span className="truncate">{product.seller?.username || product.sellerName || "Seller"}</span>
-          <span className="flex items-center gap-0.5 shrink-0">
-            <MapPin size={11} /> {product.location || "—"}
-          </span>
+          <span className="truncate">{product.seller?.shop_name || product.seller?.username || "Seller"}</span>
+          {product.location && (
+            <span className="flex items-center gap-0.5 shrink-0">
+              <MapPin size={11} /> {product.location}
+            </span>
+          )}
         </div>
       </div>
     </div>
@@ -521,35 +599,23 @@ function ProductCard({ product, go, favorites, toggleFavorite }) {
 /* ------------------------------------------------------------
    PAGE: HOME
    ------------------------------------------------------------ */
-const CATEGORIES = [
-  "Electronics", "Fashion", "Vehicles", "Property", "Furniture",
-  "Phones & Tablets", "Beauty", "Services", "Jobs", "Sports",
-];
-
-function HomePage({ go, search, favorites, toggleFavorite }) {
-  const toast = useToast();
+function HomePage({ go, search, favoriteProductIds, toggleFavorite }) {
+  const { categories } = useCategories();
   const [products, setProducts] = useState([]);
-  const [ads, setAds] = useState([]);
   const [status, setStatus] = useState("loading");
-  const [activeCategory, setActiveCategory] = useState("All");
+  const [activeCategory, setActiveCategory] = useState("all");
 
   const load = useCallback(async () => {
     setStatus("loading");
     try {
       const q = new URLSearchParams();
       if (search) q.set("search", search);
-      if (activeCategory !== "All") q.set("category", activeCategory);
-      const data = await api(`/products?${q.toString()}`, { auth: false });
-      setProducts(data.products || data.items || data || []);
+      if (activeCategory !== "all") q.set("category", activeCategory);
+      const { data } = await api(`/products?${q.toString()}`, { auth: false });
+      setProducts(data || []);
       setStatus("ready");
     } catch (e) {
       setStatus("error");
-    }
-    try {
-      const adData = await api(`/advertisements/active`, { auth: false });
-      setAds(adData.advertisements || adData.ads || adData || []);
-    } catch (e) {
-      setAds([]);
     }
   }, [search, activeCategory]);
 
@@ -561,51 +627,38 @@ function HomePage({ go, search, favorites, toggleFavorite }) {
     <div className="max-w-6xl mx-auto px-4 py-6">
       {/* Categories */}
       <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4 no-scrollbar">
-        {["All", ...CATEGORIES].map((c) => (
+        <button
+          onClick={() => setActiveCategory("all")}
+          className="shrink-0 px-4 py-2 rounded-full text-sm font-medium border transition-colors"
+          style={
+            activeCategory === "all"
+              ? { backgroundColor: COLORS.primary, borderColor: COLORS.primary, color: "white" }
+              : { borderColor: "#E5E7EB", color: "#4B5563" }
+          }
+        >
+          All
+        </button>
+        {categories.map((c) => (
           <button
-            key={c}
-            onClick={() => setActiveCategory(c)}
+            key={c.id}
+            onClick={() => setActiveCategory(c.id)}
             className="shrink-0 px-4 py-2 rounded-full text-sm font-medium border transition-colors"
             style={
-              activeCategory === c
+              activeCategory === c.id
                 ? { backgroundColor: COLORS.primary, borderColor: COLORS.primary, color: "white" }
                 : { borderColor: "#E5E7EB", color: "#4B5563" }
             }
           >
-            {c}
+            {c.icon ? `${c.icon} ` : ""}{c.name}
           </button>
         ))}
       </div>
-
-      {/* Advertisements */}
-      {ads.length > 0 && (
-        <section className="mt-6">
-          <h2 className="font-bold text-lg text-gray-800 mb-3">Sponsored</h2>
-          <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
-            {ads.map((ad) => (
-              <button
-                key={ad.id || ad._id}
-                onClick={() => (ad.productId ? go("product", { id: ad.productId }) : null)}
-                className="shrink-0 w-64 rounded-2xl overflow-hidden border border-gray-100 text-left bg-white shadow-sm"
-              >
-                <div className="w-full h-32 bg-gray-100">
-                  {ad.image && <img src={ad.image} alt={ad.title} className="w-full h-full object-cover" />}
-                </div>
-                <div className="p-3">
-                  <p className="font-semibold text-sm text-gray-800 truncate">{ad.title}</p>
-                  <p className="text-xs text-gray-500 line-clamp-2 mt-0.5">{ad.description}</p>
-                </div>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
 
       {/* Product Grid */}
       <section className="mt-8">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-bold text-lg text-gray-800">
-            {search ? `Results for "${search}"` : activeCategory !== "All" ? activeCategory : "Latest listings"}
+            {search ? `Results for "${search}"` : activeCategory !== "all" ? categories.find((c) => c.id === activeCategory)?.name || "Listings" : "Latest listings"}
           </h2>
         </div>
 
@@ -629,7 +682,7 @@ function HomePage({ go, search, favorites, toggleFavorite }) {
         {status === "ready" && products.length > 0 && (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
             {products.map((p) => (
-              <ProductCard key={p.id || p._id} product={p} go={go} favorites={favorites} toggleFavorite={toggleFavorite} />
+              <ProductCard key={p.id} product={p} go={go} favoriteProductIds={favoriteProductIds} toggleFavorite={toggleFavorite} />
             ))}
           </div>
         )}
@@ -639,9 +692,9 @@ function HomePage({ go, search, favorites, toggleFavorite }) {
 }
 
 /* ------------------------------------------------------------
-   PAGE: PRODUCT DETAIL
+   PAGE: PRODUCT DETAIL — GET /products/:id
    ------------------------------------------------------------ */
-function ProductDetailPage({ params, go, favorites, toggleFavorite }) {
+function ProductDetailPage({ params, go, favoriteProductIds, toggleFavorite }) {
   const toast = useToast();
   const { user } = useAuth();
   const [product, setProduct] = useState(null);
@@ -649,13 +702,14 @@ function ProductDetailPage({ params, go, favorites, toggleFavorite }) {
   const [activeImg, setActiveImg] = useState(0);
   const [reportOpen, setReportOpen] = useState(false);
   const [reportReason, setReportReason] = useState("");
+  const [reportDescription, setReportDescription] = useState("");
   const [reporting, setReporting] = useState(false);
 
   const load = useCallback(async () => {
     setStatus("loading");
     try {
-      const data = await api(`/products/${params.id}`, { auth: false });
-      setProduct(data.product || data);
+      const { data } = await api(`/products/${params.id}`, { auth: false });
+      setProduct(data);
       setStatus("ready");
     } catch (e) {
       setStatus("error");
@@ -669,22 +723,28 @@ function ProductDetailPage({ params, go, favorites, toggleFavorite }) {
   if (status === "loading") return <PageSpinner />;
   if (status === "error" || !product) return <ErrorState message="This listing may have been removed." onRetry={load} />;
 
-  const images = product.images && product.images.length ? product.images : product.image ? [product.image] : [];
-  const isFav = favorites.has(product.id || product._id);
+  const images = (product.images && product.images.length
+    ? [...product.images].sort((a, b) => (b.is_primary ? 1 : 0) - (a.is_primary ? 1 : 0)).map((i) => i.image_url)
+    : []);
+  const isFav = favoriteProductIds.has(product.id);
 
-  const whatsappNumber = (product.seller?.whatsapp || product.whatsapp || "").replace(/[^0-9]/g, "");
+  const whatsappNumber = (product.seller?.whatsapp || "").replace(/[^0-9]/g, "");
   const whatsappHref = whatsappNumber
-    ? `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(`Hi, I'm interested in "${product.name || product.title}" on SHINEX.`)}`
+    ? `https://wa.me/${whatsappNumber}?text=${encodeURIComponent(`Hi, I'm interested in "${product.name}" on SHINEX.`)}`
     : null;
 
   const submitReport = async () => {
-    if (!reportReason.trim()) return;
+    if (!reportReason) {
+      toast.push("Choose a reason for this report.", "error");
+      return;
+    }
     setReporting(true);
     try {
-      await api(`/reports`, { method: "POST", body: { productId: params.id, reason: reportReason } });
+      await api(`/reports`, { method: "POST", body: { target_product_id: product.id, reason: reportReason, description: reportDescription } });
       toast.push("Report submitted. Thank you for helping keep SHINEX safe.", "success");
       setReportOpen(false);
       setReportReason("");
+      setReportDescription("");
     } catch (e) {
       toast.push(e.message, "error");
     } finally {
@@ -720,13 +780,15 @@ function ProductDetailPage({ params, go, favorites, toggleFavorite }) {
         </div>
 
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">{product.name || product.title}</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{product.name}</h1>
           <p className="text-3xl font-extrabold mt-2" style={{ color: COLORS.secondary }}>
             {money(product.price)}
           </p>
-          <div className="flex items-center gap-3 mt-3 text-sm text-gray-500">
-            <span className="flex items-center gap-1"><MapPin size={14} /> {product.location || "Location not set"}</span>
-            {product.category && <span className="px-2 py-0.5 rounded-full bg-gray-100 text-xs">{product.category}</span>}
+          <div className="flex items-center gap-3 mt-3 text-sm text-gray-500 flex-wrap">
+            {product.location && <span className="flex items-center gap-1"><MapPin size={14} /> {product.location}</span>}
+            {product.category?.name && <span className="px-2 py-0.5 rounded-full bg-gray-100 text-xs">{product.category.name}</span>}
+            {product.condition && <span className="px-2 py-0.5 rounded-full bg-gray-100 text-xs capitalize">{product.condition}</span>}
+            {product.is_sold && <span className="px-2 py-0.5 rounded-full bg-gray-800 text-white text-xs">Sold</span>}
           </div>
 
           <button
@@ -734,14 +796,14 @@ function ProductDetailPage({ params, go, favorites, toggleFavorite }) {
             className="flex items-center gap-3 mt-5 p-3 rounded-xl border border-gray-100 w-full hover:bg-gray-50"
           >
             <div className="w-11 h-11 rounded-full bg-gray-100 overflow-hidden flex items-center justify-center shrink-0">
-              {product.seller?.avatar ? (
-                <img src={product.seller.avatar} className="w-full h-full object-cover" alt="" />
+              {product.seller?.avatar_url ? (
+                <img src={product.seller.avatar_url} className="w-full h-full object-cover" alt="" />
               ) : (
                 <User size={20} className="text-gray-400" />
               )}
             </div>
             <div className="text-left">
-              <p className="font-semibold text-sm text-gray-800">{product.seller?.shopName || product.seller?.username || "Seller"}</p>
+              <p className="font-semibold text-sm text-gray-800">{product.seller?.shop_name || product.seller?.username || "Seller"}</p>
               <p className="text-xs text-gray-400">@{product.seller?.username || "unknown"}</p>
             </div>
           </button>
@@ -763,7 +825,7 @@ function ProductDetailPage({ params, go, favorites, toggleFavorite }) {
             )}
             <Button
               variant="outline"
-              onClick={() => (user ? toggleFavorite(product.id || product._id, "product") : go("login"))}
+              onClick={() => (user ? toggleFavorite(product.id, "product") : go("login"))}
               className="!bg-white"
             >
               <Heart size={17} fill={isFav ? "#EF4444" : "none"} color={isFav ? "#EF4444" : COLORS.primary} />
@@ -781,16 +843,26 @@ function ProductDetailPage({ params, go, favorites, toggleFavorite }) {
 
       {reportOpen && (
         <Modal onClose={() => setReportOpen(false)} title="Report this listing">
-          <TextArea
-            label="What's wrong with this listing?"
-            rows={4}
-            value={reportReason}
-            onChange={(e) => setReportReason(e.target.value)}
-            placeholder="Describe the issue..."
-          />
+          <Select label="Reason" value={reportReason} onChange={(e) => setReportReason(e.target.value)}>
+            <option value="">Select a reason</option>
+            <option value="Spam">Spam</option>
+            <option value="Scam or fraud">Scam or fraud</option>
+            <option value="Counterfeit item">Counterfeit item</option>
+            <option value="Inappropriate content">Inappropriate content</option>
+            <option value="Other">Other</option>
+          </Select>
+          <div className="mt-4">
+            <TextArea
+              label="Additional details (optional)"
+              rows={4}
+              value={reportDescription}
+              onChange={(e) => setReportDescription(e.target.value)}
+              placeholder="Describe the issue..."
+            />
+          </div>
           <div className="flex gap-3 mt-4">
             <Button variant="outline" className="flex-1 !bg-white" onClick={() => setReportOpen(false)}>Cancel</Button>
-            <Button className="flex-1" onClick={submitReport} disabled={reporting || !reportReason.trim()}>
+            <Button className="flex-1" onClick={submitReport} disabled={reporting || !reportReason}>
               {reporting ? "Submitting..." : "Submit report"}
             </Button>
           </div>
@@ -818,22 +890,25 @@ function Modal({ title, children, onClose }) {
 }
 
 /* ------------------------------------------------------------
-   PAGE: SHOP
+   PAGE: SHOP — GET /users/:username + GET /users/:username/shop
    ------------------------------------------------------------ */
-function ShopPage({ params, go, favorites, toggleFavorite }) {
+function ShopPage({ params, go, favoriteSellerIds, toggleFavorite }) {
   const { user } = useAuth();
-  const toast = useToast();
+  const [profile, setProfile] = useState(null);
   const [shop, setShop] = useState(null);
   const [products, setProducts] = useState([]);
   const [status, setStatus] = useState("loading");
-  const [isFavShop, setIsFavShop] = useState(false);
 
   const load = useCallback(async () => {
     setStatus("loading");
     try {
-      const data = await api(`/shops/${params.username}`, { auth: false });
-      setShop(data.shop || data.user || data);
-      setProducts(data.products || []);
+      const [profileRes, shopRes] = await Promise.all([
+        api(`/users/${params.username}`, { auth: false }),
+        api(`/users/${params.username}/shop`, { auth: false }),
+      ]);
+      setProfile(profileRes.data.user);
+      setShop(shopRes.data.shop);
+      setProducts(shopRes.data.products || []);
       setStatus("ready");
     } catch (e) {
       setStatus("error");
@@ -845,40 +920,32 @@ function ShopPage({ params, go, favorites, toggleFavorite }) {
   }, [load]);
 
   if (status === "loading") return <PageSpinner />;
-  if (status === "error" || !shop) return <ErrorState message="This shop could not be found." onRetry={load} />;
+  if (status === "error" || !profile) return <ErrorState message="This shop could not be found." onRetry={load} />;
 
-  const whatsappNumber = (shop.whatsapp || "").replace(/[^0-9]/g, "");
-
-  const toggleShopFav = async () => {
-    if (!user) return go("login");
-    try {
-      await api(`/favorites/shops/${shop.id || shop._id}`, { method: isFavShop ? "DELETE" : "POST" });
-      setIsFavShop((v) => !v);
-      toast.push(isFavShop ? "Removed from favorites" : "Shop added to favorites", "success");
-    } catch (e) {
-      toast.push(e.message, "error");
-    }
-  };
+  const whatsappNumber = (shop?.whatsapp || profile.whatsapp || "").replace(/[^0-9]/g, "");
+  const isFavShop = favoriteSellerIds.has(profile.id);
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
       <div className="bg-white rounded-2xl border border-gray-100 p-6 flex flex-col sm:flex-row gap-5 items-start">
         <div className="w-20 h-20 rounded-full bg-gray-100 overflow-hidden flex items-center justify-center shrink-0">
-          {shop.avatar ? <img src={shop.avatar} className="w-full h-full object-cover" alt="" /> : <User size={32} className="text-gray-400" />}
+          {profile.avatar_url ? <img src={profile.avatar_url} className="w-full h-full object-cover" alt="" /> : <User size={32} className="text-gray-400" />}
         </div>
         <div className="flex-1">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h1 className="text-xl font-bold text-gray-900">{shop.shopName || shop.username}</h1>
-              <p className="text-sm text-gray-400">@{shop.username}</p>
+              <h1 className="text-xl font-bold text-gray-900">{shop?.shop_name || profile.username}</h1>
+              <p className="text-sm text-gray-400">@{profile.username}</p>
             </div>
-            <button onClick={toggleShopFav} className="p-2 rounded-full border border-gray-100 hover:bg-gray-50 shrink-0">
-              <Heart size={18} fill={isFavShop ? "#EF4444" : "none"} color={isFavShop ? "#EF4444" : "#9CA3AF"} />
-            </button>
+            {user && user.username !== profile.username && (
+              <button onClick={() => toggleFavorite(profile.id, "seller")} className="p-2 rounded-full border border-gray-100 hover:bg-gray-50 shrink-0">
+                <Heart size={18} fill={isFavShop ? "#EF4444" : "none"} color={isFavShop ? "#EF4444" : "#9CA3AF"} />
+              </button>
+            )}
           </div>
-          {shop.bio && <p className="text-sm text-gray-600 mt-2 max-w-xl">{shop.bio}</p>}
+          {(shop?.shop_description || profile.bio) && <p className="text-sm text-gray-600 mt-2 max-w-xl">{shop?.shop_description || profile.bio}</p>}
           <div className="flex flex-wrap gap-4 mt-3 text-sm text-gray-500">
-            {shop.location && <span className="flex items-center gap-1"><MapPin size={14} /> {shop.location}</span>}
+            {profile.location && <span className="flex items-center gap-1"><MapPin size={14} /> {profile.location}</span>}
             {whatsappNumber && (
               <a href={`https://wa.me/${whatsappNumber}`} target="_blank" rel="noreferrer" className="flex items-center gap-1 font-medium" style={{ color: COLORS.secondary }}>
                 <Phone size={14} /> WhatsApp seller
@@ -894,7 +961,13 @@ function ShopPage({ params, go, favorites, toggleFavorite }) {
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
           {products.map((p) => (
-            <ProductCard key={p.id || p._id} product={p} go={go} favorites={favorites} toggleFavorite={toggleFavorite} />
+            <ProductCard
+              key={p.id}
+              product={{ ...p, seller: { username: profile.username, shop_name: shop?.shop_name } }}
+              go={go}
+              favoriteProductIds={new Set()}
+              toggleFavorite={() => {}}
+            />
           ))}
         </div>
       )}
@@ -903,7 +976,7 @@ function ShopPage({ params, go, favorites, toggleFavorite }) {
 }
 
 /* ------------------------------------------------------------
-   PAGE: REGISTER
+   PAGE: REGISTER — POST /auth/register
    ------------------------------------------------------------ */
 function RegisterPage({ go }) {
   const { register } = useAuth();
@@ -917,11 +990,11 @@ function RegisterPage({ go }) {
 
   const validate = () => {
     const e = {};
-    if (!form.fullName.trim()) e.fullName = "Full name is required";
-    if (!form.username.trim()) e.username = "Username is required";
+    if (form.fullName.trim().length < 2) e.fullName = "Full name is required";
+    if (!/^[a-zA-Z0-9_]{3,50}$/.test(form.username)) e.username = "3+ characters — letters, numbers, underscore only";
     if (!/^\S+@\S+\.\S+$/.test(form.email)) e.email = "Enter a valid email";
-    if (!form.phone.trim()) e.phone = "Phone number is required";
-    if (form.password.length < 6) e.password = "Password must be at least 6 characters";
+    if (form.phone.trim().length < 10) e.phone = "Enter a valid phone number";
+    if (form.password.length < 8) e.password = "Password must be at least 8 characters";
     if (form.password !== form.confirmPassword) e.confirmPassword = "Passwords don't match";
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -933,7 +1006,7 @@ function RegisterPage({ go }) {
     setLoading(true);
     try {
       await register({
-        fullName: form.fullName,
+        full_name: form.fullName,
         username: form.username,
         email: form.email,
         phone: form.phone,
@@ -956,7 +1029,7 @@ function RegisterPage({ go }) {
         <Input label="Email" type="email" value={form.email} onChange={set("email")} error={errors.email} placeholder="you@example.com" />
         <Input label="Phone number" value={form.phone} onChange={set("phone")} error={errors.phone} placeholder="+234..." />
         <div className="relative">
-          <Input label="Password" type={showPw ? "text" : "password"} value={form.password} onChange={set("password")} error={errors.password} placeholder="At least 6 characters" />
+          <Input label="Password" type={showPw ? "text" : "password"} value={form.password} onChange={set("password")} error={errors.password} placeholder="At least 8 characters" />
           <button type="button" onClick={() => setShowPw((v) => !v)} className="absolute right-3 top-[38px] text-gray-400">
             {showPw ? <EyeOff size={17} /> : <Eye size={17} />}
           </button>
@@ -992,7 +1065,7 @@ function AuthLayout({ title, subtitle, children, go, switchLabel, switchCta, swi
 }
 
 /* ------------------------------------------------------------
-   PAGE: LOGIN
+   PAGE: LOGIN — POST /auth/login
    ------------------------------------------------------------ */
 function LoginPage({ go }) {
   const { login } = useAuth();
@@ -1084,16 +1157,26 @@ function ForgotPasswordPage({ go }) {
 }
 
 /* ------------------------------------------------------------
-   PAGE: SELL
+   PAGE: SELL — POST /products (multipart, field "images", max 5)
+   category_id must be a real category id from
+   GET /products/categories/all.
    ------------------------------------------------------------ */
 function SellPage({ go }) {
   const { user } = useAuth();
   const toast = useToast();
-  const [form, setForm] = useState({ name: "", price: "", category: CATEGORIES[0], description: "", location: "" });
+  const { categories, status: catStatus } = useCategories();
+  const [form, setForm] = useState({ name: "", price: "", categoryId: "", condition: "used", description: "", location: "" });
   const [images, setImages] = useState([]);
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const fileRef = useRef(null);
+
+  useEffect(() => {
+    if (categories.length && !form.categoryId) {
+      setForm((f) => ({ ...f, categoryId: categories[0].id }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categories]);
 
   if (!user) {
     return <EmptyState icon={Plus} title="Log in to sell" subtitle="Create an account or log in to list a product on SHINEX." action={<Button onClick={() => go("login")}>Log in</Button>} />;
@@ -1117,8 +1200,7 @@ function SellPage({ go }) {
     const e = {};
     if (!form.name.trim()) e.name = "Product name is required";
     if (!form.price || Number(form.price) <= 0) e.price = "Enter a valid price";
-    if (!form.description.trim()) e.description = "Add a short description";
-    if (!form.location.trim()) e.location = "Location is required";
+    if (!form.categoryId) e.category = "Choose a category";
     if (images.length === 0) e.images = "Add at least one image";
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -1132,13 +1214,14 @@ function SellPage({ go }) {
       const fd = new FormData();
       fd.append("name", form.name);
       fd.append("price", form.price);
-      fd.append("category", form.category);
+      fd.append("category_id", form.categoryId);
+      fd.append("condition", form.condition);
       fd.append("description", form.description);
       fd.append("location", form.location);
       images.forEach((img) => fd.append("images", img.file));
-      const data = await api("/products", { method: "POST", body: fd, formData: true });
+      const { data } = await api("/products", { method: "POST", body: fd, formData: true });
       toast.push("Your product is now live!", "success");
-      const newId = data.product?.id || data.product?._id || data.id;
+      const newId = data.product?.id;
       go(newId ? "product" : "home", newId ? { id: newId } : undefined);
     } catch (e) {
       toast.push(e.message, "error");
@@ -1182,22 +1265,22 @@ function SellPage({ go }) {
         <Input label="Product name" value={form.name} onChange={set("name")} error={errors.name} placeholder="e.g. iPhone 13 Pro Max" />
         <Input label="Price (₦)" type="number" value={form.price} onChange={set("price")} error={errors.price} placeholder="e.g. 350000" />
 
-        <label className="block">
-          <span className="block text-sm font-medium text-gray-700 mb-1">Category</span>
-          <div className="relative">
-            <select
-              value={form.category}
-              onChange={set("category")}
-              className="w-full appearance-none rounded-xl border border-gray-200 px-3.5 py-2.5 text-[15px] outline-none focus:ring-2 focus:ring-[#5B3FC6]/20 focus:border-[#5B3FC6] bg-white"
-            >
-              {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-            <ChevronDown size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-          </div>
-        </label>
+        <Select label="Category" value={form.categoryId} onChange={set("categoryId")} error={errors.category} disabled={catStatus === "loading"}>
+          {catStatus === "loading" && <option value="">Loading categories...</option>}
+          {catStatus === "error" && <option value="">Couldn't load categories</option>}
+          {categories.map((c) => (
+            <option key={c.id} value={c.id}>{c.name}</option>
+          ))}
+        </Select>
 
-        <TextArea label="Description" rows={4} value={form.description} onChange={set("description")} error={errors.description} placeholder="Condition, features, reason for selling..." />
-        <Input label="Location" value={form.location} onChange={set("location")} error={errors.location} placeholder="e.g. Ikeja, Lagos" />
+        <Select label="Condition" value={form.condition} onChange={set("condition")}>
+          <option value="new">New</option>
+          <option value="used">Used</option>
+          <option value="refurbished">Refurbished</option>
+        </Select>
+
+        <TextArea label="Description" rows={4} value={form.description} onChange={set("description")} placeholder="Condition, features, reason for selling..." />
+        <Input label="Location" value={form.location} onChange={set("location")} placeholder="e.g. Ikeja, Lagos" />
 
         <Button className="w-full !py-3" disabled={loading}>
           {loading ? "Listing product..." : "List Product"}
@@ -1208,22 +1291,22 @@ function SellPage({ go }) {
 }
 
 /* ------------------------------------------------------------
-   PAGE: FAVORITES
+   PAGE: FAVORITES — GET /favorites/products, GET /favorites/sellers
    ------------------------------------------------------------ */
-function FavoritesPage({ go, favorites, toggleFavorite }) {
+function FavoritesPage({ go, favoriteProductIds, favoriteSellerIds, toggleFavorite }) {
   const { user } = useAuth();
   const [tab, setTab] = useState("products");
   const [products, setProducts] = useState([]);
-  const [shops, setShops] = useState([]);
+  const [sellers, setSellers] = useState([]);
   const [status, setStatus] = useState("loading");
 
   const load = useCallback(async () => {
     if (!user) return;
     setStatus("loading");
     try {
-      const data = await api("/favorites");
-      setProducts(data.products || []);
-      setShops(data.shops || []);
+      const [prodRes, sellerRes] = await Promise.all([api("/favorites/products"), api("/favorites/sellers")]);
+      setProducts((prodRes.data || []).map((f) => f.product).filter(Boolean));
+      setSellers((sellerRes.data || []).map((f) => f.seller).filter(Boolean));
       setStatus("ready");
     } catch (e) {
       setStatus("error");
@@ -1267,24 +1350,24 @@ function FavoritesPage({ go, favorites, toggleFavorite }) {
         ) : (
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
             {products.map((p) => (
-              <ProductCard key={p.id || p._id} product={p} go={go} favorites={favorites} toggleFavorite={toggleFavorite} />
+              <ProductCard key={p.id} product={p} go={go} favoriteProductIds={favoriteProductIds} toggleFavorite={toggleFavorite} />
             ))}
           </div>
         )
       )}
 
       {status === "ready" && tab === "shops" && (
-        shops.length === 0 ? (
+        sellers.length === 0 ? (
           <EmptyState icon={Store} title="No favorite shops yet" subtitle="Follow shops you trust to find them quickly next time." action={<Button onClick={() => go("home")}>Explore shops</Button>} />
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {shops.map((s) => (
-              <button key={s.id || s._id} onClick={() => go("shop", { username: s.username })} className="flex items-center gap-3 bg-white rounded-2xl border border-gray-100 p-4 text-left hover:shadow-md">
+            {sellers.map((s) => (
+              <button key={s.id} onClick={() => go("shop", { username: s.username })} className="flex items-center gap-3 bg-white rounded-2xl border border-gray-100 p-4 text-left hover:shadow-md">
                 <div className="w-12 h-12 rounded-full bg-gray-100 overflow-hidden flex items-center justify-center shrink-0">
-                  {s.avatar ? <img src={s.avatar} className="w-full h-full object-cover" alt="" /> : <User size={20} className="text-gray-400" />}
+                  {s.avatar_url ? <img src={s.avatar_url} className="w-full h-full object-cover" alt="" /> : <User size={20} className="text-gray-400" />}
                 </div>
                 <div>
-                  <p className="font-semibold text-sm text-gray-800">{s.shopName || s.username}</p>
+                  <p className="font-semibold text-sm text-gray-800">{s.shop_name || s.username}</p>
                   <p className="text-xs text-gray-400">@{s.username}</p>
                 </div>
               </button>
@@ -1297,7 +1380,10 @@ function FavoritesPage({ go, favorites, toggleFavorite }) {
 }
 
 /* ------------------------------------------------------------
-   PAGE: PROFILE
+   PAGE: PROFILE — GET/PUT /users/me
+   Stats derived from GET /users/:username/shop (product_count)
+   and GET /favorites/products (pagination.total) — there is no
+   dedicated "my stats" endpoint.
    ------------------------------------------------------------ */
 function ProfilePage({ go }) {
   const { user, logout, refresh } = useAuth();
@@ -1310,13 +1396,21 @@ function ProfilePage({ go }) {
   useEffect(() => {
     if (user) {
       setForm({
-        fullName: user.fullName || "",
+        full_name: user.full_name || "",
         bio: user.bio || "",
         location: user.location || "",
         whatsapp: user.whatsapp || "",
-        shopName: user.shopName || "",
+        shop_name: user.shop_name || "",
       });
-      api("/users/me/stats").then((d) => setStats(d)).catch(() => setStats(null));
+      Promise.all([
+        api(`/users/${user.username}/shop?limit=1`, { auth: false }).catch(() => null),
+        api(`/favorites/products?limit=1`).catch(() => null),
+      ]).then(([shopRes, favRes]) => {
+        setStats({
+          listings: shopRes?.data?.shop?.product_count ?? shopRes?.data?.pagination?.total ?? null,
+          favorites: favRes?.data ? favRes.pagination?.total ?? favRes.data.length : null,
+        });
+      });
     }
   }, [user]);
 
@@ -1327,7 +1421,7 @@ function ProfilePage({ go }) {
   const save = async () => {
     setSaving(true);
     try {
-      await api("/users/me", { method: "PATCH", body: form });
+      await api("/users/me", { method: "PUT", body: form });
       await refresh();
       toast.push("Profile updated", "success");
       setEditing(false);
@@ -1343,10 +1437,10 @@ function ProfilePage({ go }) {
       <div className="bg-white rounded-2xl border border-gray-100 p-6">
         <div className="flex items-center gap-4">
           <div className="w-20 h-20 rounded-full bg-gray-100 overflow-hidden flex items-center justify-center shrink-0">
-            {user.avatar ? <img src={user.avatar} className="w-full h-full object-cover" alt="" /> : <User size={30} className="text-gray-400" />}
+            {user.avatar_url ? <img src={user.avatar_url} className="w-full h-full object-cover" alt="" /> : <User size={30} className="text-gray-400" />}
           </div>
           <div className="flex-1">
-            <h1 className="text-xl font-bold text-gray-900">{user.fullName}</h1>
+            <h1 className="text-xl font-bold text-gray-900">{user.full_name}</h1>
             <p className="text-sm text-gray-400">@{user.username}</p>
           </div>
           {!editing && (
@@ -1357,8 +1451,8 @@ function ProfilePage({ go }) {
         </div>
 
         {stats && (
-          <div className="grid grid-cols-3 gap-3 mt-6">
-            {[{ l: "Listings", v: stats.productsCount }, { l: "Favorites", v: stats.favoritesCount }, { l: "Shop views", v: stats.viewsCount }].map((s) => (
+          <div className="grid grid-cols-2 gap-3 mt-6">
+            {[{ l: "Listings", v: stats.listings }, { l: "Favorites", v: stats.favorites }].map((s) => (
               <div key={s.l} className="text-center bg-gray-50 rounded-xl py-3">
                 <p className="font-bold text-lg" style={{ color: COLORS.primary }}>{s.v ?? "—"}</p>
                 <p className="text-xs text-gray-500">{s.l}</p>
@@ -1369,8 +1463,8 @@ function ProfilePage({ go }) {
 
         {editing ? (
           <div className="mt-6 space-y-4">
-            <Input label="Full name" value={form.fullName} onChange={(e) => setForm((f) => ({ ...f, fullName: e.target.value }))} />
-            <Input label="Shop name" value={form.shopName} onChange={(e) => setForm((f) => ({ ...f, shopName: e.target.value }))} />
+            <Input label="Full name" value={form.full_name} onChange={(e) => setForm((f) => ({ ...f, full_name: e.target.value }))} />
+            <Input label="Shop name" value={form.shop_name} onChange={(e) => setForm((f) => ({ ...f, shop_name: e.target.value }))} />
             <TextArea label="Bio" rows={3} value={form.bio} onChange={(e) => setForm((f) => ({ ...f, bio: e.target.value }))} />
             <Input label="Location" value={form.location} onChange={(e) => setForm((f) => ({ ...f, location: e.target.value }))} />
             <Input label="WhatsApp number" value={form.whatsapp} onChange={(e) => setForm((f) => ({ ...f, whatsapp: e.target.value }))} />
@@ -1385,7 +1479,7 @@ function ProfilePage({ go }) {
             <div className="flex flex-wrap gap-4 text-gray-500">
               {user.location && <span className="flex items-center gap-1"><MapPin size={14} /> {user.location}</span>}
               {user.whatsapp && <span className="flex items-center gap-1"><Phone size={14} /> {user.whatsapp}</span>}
-              {user.shopName && <span className="flex items-center gap-1"><Store size={14} /> {user.shopName}</span>}
+              {user.shop_name && <span className="flex items-center gap-1"><Store size={14} /> {user.shop_name}</span>}
             </div>
             <div className="flex gap-3 pt-3">
               <Button variant="outline" className="!bg-white" onClick={() => go("shop", { username: user.username })}>View my shop</Button>
@@ -1401,48 +1495,69 @@ function ProfilePage({ go }) {
 }
 
 /* ------------------------------------------------------------
-   PAGE: ADVERTISE
+   PAGE: ADVERTISE — GET /advertisements/pricing, POST /advertisements,
+   then POST /advertisements/:id/pay to get the Paystack authorization_url.
    ------------------------------------------------------------ */
-const AD_PLANS = [
-  { key: "1day", label: "1 Day", price: 200 },
-  { key: "3days", label: "3 Days", price: 500 },
-  { key: "7days", label: "7 Days", price: 1000 },
-  { key: "30days", label: "30 Days", price: 3000 },
-];
-
 function AdvertisePage({ go }) {
   const { user } = useAuth();
   const toast = useToast();
-  const [plan, setPlan] = useState(AD_PLANS[1].key);
+  const [plans, setPlans] = useState([]);
+  const [plansStatus, setPlansStatus] = useState("loading");
+  const [planId, setPlanId] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [image, setImage] = useState(null);
   const fileRef = useRef(null);
   const [loading, setLoading] = useState(false);
 
+  const loadPricing = useCallback(async () => {
+    setPlansStatus("loading");
+    try {
+      const { data } = await api("/advertisements/pricing", { auth: false });
+      setPlans(data || []);
+      if (data && data.length) setPlanId(data[0].id);
+      setPlansStatus("ready");
+    } catch (e) {
+      setPlansStatus("error");
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPricing();
+  }, [loadPricing]);
+
   if (!user) {
     return <EmptyState icon={Megaphone} title="Log in to advertise" subtitle="Promote your listing to more buyers on SHINEX." action={<Button onClick={() => go("login")}>Log in</Button>} />;
   }
 
-  const selectedPlan = AD_PLANS.find((p) => p.key === plan);
+  const selectedPlan = plans.find((p) => p.id === planId);
 
   const submit = async () => {
-    if (!title.trim() || !description.trim()) {
-      toast.push("Add a title and description for your ad.", "error");
+    if (!title.trim()) {
+      toast.push("Add a title for your ad.", "error");
+      return;
+    }
+    if (!image) {
+      toast.push("An advertisement image is required.", "error");
+      return;
+    }
+    if (!planId) {
+      toast.push("Choose a duration.", "error");
       return;
     }
     setLoading(true);
     try {
       const fd = new FormData();
-      fd.append("plan", plan);
       fd.append("title", title);
       fd.append("description", description);
-      if (image) fd.append("image", image.file);
-      const data = await api("/advertisements", { method: "POST", body: fd, formData: true });
-      const authUrl = data.authorization_url || data.paymentUrl;
-      if (authUrl) {
+      fd.append("duration_id", planId);
+      fd.append("image", image.file);
+      const created = await api("/advertisements", { method: "POST", body: fd, formData: true });
+      const adId = created.data.advertisement.id;
+      const payment = await api(`/advertisements/${adId}/pay`, { method: "POST" });
+      if (payment.data?.authorization_url) {
         toast.push("Redirecting to Paystack...", "info");
-        window.location.href = authUrl;
+        window.location.href = payment.data.authorization_url;
       } else {
         toast.push("Advertisement created — awaiting payment confirmation.", "success");
         go("home");
@@ -1459,19 +1574,27 @@ function AdvertisePage({ go }) {
       <h1 className="text-2xl font-bold text-gray-900">Advertise on SHINEX</h1>
       <p className="text-sm text-gray-500 mt-1 mb-6">Get your listing seen by more buyers with a featured spot on the home page.</p>
 
-      <div className="grid grid-cols-2 gap-3 mb-6">
-        {AD_PLANS.map((p) => (
-          <button
-            key={p.key}
-            onClick={() => setPlan(p.key)}
-            className="rounded-2xl border-2 p-4 text-left transition-colors bg-white"
-            style={{ borderColor: plan === p.key ? COLORS.primary : "#E5E7EB" }}
-          >
-            <p className="font-semibold text-gray-800">{p.label}</p>
-            <p className="text-lg font-extrabold mt-1" style={{ color: COLORS.secondary }}>{money(p.price)}</p>
-          </button>
-        ))}
-      </div>
+      {plansStatus === "loading" && (
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20" />)}
+        </div>
+      )}
+      {plansStatus === "error" && <ErrorState message="Couldn't load advertising plans." onRetry={loadPricing} />}
+      {plansStatus === "ready" && (
+        <div className="grid grid-cols-2 gap-3 mb-6">
+          {plans.map((p) => (
+            <button
+              key={p.id}
+              onClick={() => setPlanId(p.id)}
+              className="rounded-2xl border-2 p-4 text-left transition-colors bg-white"
+              style={{ borderColor: planId === p.id ? COLORS.primary : "#E5E7EB" }}
+            >
+              <p className="font-semibold text-gray-800">{p.duration_days} Day{p.duration_days > 1 ? "s" : ""}</p>
+              <p className="text-lg font-extrabold mt-1" style={{ color: COLORS.secondary }}>{money(p.price)}</p>
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className="bg-white rounded-2xl border border-gray-100 p-6 space-y-4">
         <Input label="Ad title" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Weekend discount on all shoes" />
@@ -1496,13 +1619,15 @@ function AdvertisePage({ go }) {
           <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => e.target.files[0] && setImage({ file: e.target.files[0], url: URL.createObjectURL(e.target.files[0]) })} />
         </div>
 
-        <div className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-3">
-          <span className="text-sm text-gray-600">Total for {selectedPlan.label}</span>
-          <span className="font-bold" style={{ color: COLORS.primary }}>{money(selectedPlan.price)}</span>
-        </div>
+        {selectedPlan && (
+          <div className="flex items-center justify-between bg-gray-50 rounded-xl px-4 py-3">
+            <span className="text-sm text-gray-600">Total for {selectedPlan.duration_days} day{selectedPlan.duration_days > 1 ? "s" : ""}</span>
+            <span className="font-bold" style={{ color: COLORS.primary }}>{money(selectedPlan.price)}</span>
+          </div>
+        )}
 
-        <Button variant="secondary" className="w-full !py-3" onClick={submit} disabled={loading}>
-          {loading ? "Processing..." : `Pay with Paystack — ${money(selectedPlan.price)}`}
+        <Button variant="secondary" className="w-full !py-3" onClick={submit} disabled={loading || !selectedPlan}>
+          {loading ? "Processing..." : selectedPlan ? `Pay with Paystack — ${money(selectedPlan.price)}` : "Pay with Paystack"}
         </Button>
       </div>
     </div>
@@ -1511,23 +1636,24 @@ function AdvertisePage({ go }) {
 
 /* ------------------------------------------------------------
    PAGE: CONTACT / ABOUT / PRIVACY / TERMS
+   POST /contact requires name, email, subject, message (10+ chars)
    ------------------------------------------------------------ */
 function ContactPage() {
   const toast = useToast();
-  const [form, setForm] = useState({ name: "", email: "", message: "" });
+  const [form, setForm] = useState({ name: "", email: "", subject: "", message: "" });
   const [loading, setLoading] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
-    if (!form.name || !form.email || !form.message) {
-      toast.push("Please fill in every field.", "error");
+    if (!form.name || !form.email || !form.subject || form.message.trim().length < 10) {
+      toast.push("Please fill in every field (message needs at least 10 characters).", "error");
       return;
     }
     setLoading(true);
     try {
       await api("/contact", { method: "POST", body: form, auth: false });
       toast.push("Message sent — we'll get back to you soon.", "success");
-      setForm({ name: "", email: "", message: "" });
+      setForm({ name: "", email: "", subject: "", message: "" });
     } catch (e) {
       toast.push(e.message, "error");
     } finally {
@@ -1543,9 +1669,9 @@ function ContactPage() {
       <div className="grid md:grid-cols-2 gap-8 mt-8">
         <div className="space-y-4">
           {[
-            { icon: Mail, label: "Email", value: "support@shinexmarketplace.com" },
-            { icon: Phone, label: "Phone", value: "+234 800 000 0000" },
-            { icon: MessageCircle, label: "WhatsApp", value: "+234 800 000 0000" },
+            { icon: Mail, label: "Email", value: "shinexlearning@gmail.com" },
+            { icon: Phone, label: "Phone", value: "+234 706 757 4479" },
+            { icon: MessageCircle, label: "WhatsApp", value: "+234 802 505 2852" },
           ].map((c) => (
             <div key={c.label} className="flex items-center gap-3 bg-white rounded-xl border border-gray-100 p-4">
               <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0" style={{ backgroundColor: `${COLORS.primary}14` }}>
@@ -1562,6 +1688,7 @@ function ContactPage() {
         <form onSubmit={submit} className="bg-white rounded-2xl border border-gray-100 p-6 space-y-4">
           <Input label="Name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Your name" />
           <Input label="Email" type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="you@example.com" />
+          <Input label="Subject" value={form.subject} onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))} placeholder="What's this about?" />
           <TextArea label="Message" rows={4} value={form.message} onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))} placeholder="How can we help?" />
           <Button className="w-full !py-3" disabled={loading}>{loading ? "Sending..." : "Send message"}</Button>
         </form>
@@ -1656,8 +1783,8 @@ const ADMIN_SECTIONS = [
   { key: "users", label: "Users", icon: Users },
   { key: "products", label: "Products", icon: Package },
   { key: "categories", label: "Categories", icon: Tag },
-  { key: "ads", label: "Advertisements", icon: Megaphone },
-  { key: "pricing", label: "Ad Pricing", icon: CreditCard },
+  { key: "advertisements", label: "Advertisements", icon: Megaphone },
+  { key: "durations", label: "Ad Pricing", icon: CreditCard },
   { key: "payments", label: "Payments", icon: CreditCard },
   { key: "reports", label: "Reports", icon: Flag },
   { key: "contact", label: "Contact", icon: Mail },
@@ -1671,7 +1798,7 @@ function AdminDashboard({ go }) {
   if (!user) {
     return <EmptyState icon={LayoutDashboard} title="Log in required" action={<Button onClick={() => go("login")}>Log in</Button>} />;
   }
-  if (user.role !== "admin") {
+  if (!user.is_admin) {
     return <EmptyState icon={AlertCircle} title="Admins only" subtitle="You don't have permission to view this page." action={<Button onClick={() => go("home")}>Back home</Button>} />;
   }
 
@@ -1703,14 +1830,14 @@ function AdminDashboard({ go }) {
 
       <main className="flex-1 min-w-0">
         {section === "overview" && <AdminOverview />}
-        {section === "users" && <AdminTable resource="users" columns={["fullName", "username", "email", "phone", "createdAt"]} title="Users" searchable />}
-        {section === "products" && <AdminTable resource="products" columns={["name", "price", "category", "seller", "createdAt"]} title="Products" searchable />}
+        {section === "users" && <AdminUsersTable />}
+        {section === "products" && <AdminTable resource="products" columns={["name", "price", "user", "category", "is_sold", "created_at"]} title="Products" searchable deletable />}
         {section === "categories" && <AdminCategories />}
-        {section === "ads" && <AdminTable resource="advertisements" columns={["title", "plan", "status", "createdAt"]} title="Advertisements" searchable />}
-        {section === "pricing" && <AdminAdPricing />}
-        {section === "payments" && <AdminTable resource="payments" columns={["reference", "amount", "status", "createdAt"]} title="Payments" searchable />}
-        {section === "reports" && <AdminTable resource="reports" columns={["product", "reason", "status", "createdAt"]} title="Reports" searchable />}
-        {section === "contact" && <AdminTable resource="contact" columns={["name", "email", "message", "createdAt"]} title="Contact messages" searchable />}
+        {section === "advertisements" && <AdminAdsTable />}
+        {section === "durations" && <AdminDurations />}
+        {section === "payments" && <AdminTable resource="payments" columns={["paystack_reference", "amount", "status", "user", "created_at"]} title="Payments" searchable />}
+        {section === "reports" && <AdminReportsTable />}
+        {section === "contact" && <AdminTable resource="contact" columns={["name", "email", "subject", "status", "created_at"]} title="Contact messages" searchable deletable />}
       </main>
     </div>
   );
@@ -1723,8 +1850,21 @@ function AdminOverview() {
   const load = useCallback(async () => {
     setStatus("loading");
     try {
-      const data = await api("/admin/stats");
-      setStats(data);
+      const [usersRes, productsRes, adsRes, reportsRes, paymentsRes] = await Promise.all([
+        api("/admin/users?limit=1"),
+        api("/admin/products?limit=1"),
+        api("/admin/advertisements?approval=pending&limit=1"),
+        api("/admin/reports?status=pending&limit=1"),
+        api("/admin/payments/stats"),
+      ]);
+      setStats({
+        users: usersRes.pagination?.total ?? usersRes.data?.length ?? 0,
+        products: productsRes.pagination?.total ?? productsRes.data?.length ?? 0,
+        pendingAds: adsRes.pagination?.total ?? adsRes.data?.length ?? 0,
+        pendingReports: reportsRes.pagination?.total ?? reportsRes.data?.length ?? 0,
+        revenue: paymentsRes.data?.total_revenue ?? 0,
+        transactions: paymentsRes.data?.total_transactions ?? 0,
+      });
       setStatus("ready");
     } catch (e) {
       setStatus("error");
@@ -1733,20 +1873,22 @@ function AdminOverview() {
 
   useEffect(() => { load(); }, [load]);
 
-  const cards = [
-    { label: "Total users", value: stats?.usersCount, icon: Users },
-    { label: "Total products", value: stats?.productsCount, icon: Package },
-    { label: "Active ads", value: stats?.activeAdsCount, icon: Megaphone },
-    { label: "Pending reports", value: stats?.pendingReportsCount, icon: Flag },
-  ];
-
-  if (status === "loading") return <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>;
+  if (status === "loading") return <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">{Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24" />)}</div>;
   if (status === "error") return <ErrorState message="Couldn't load dashboard stats." onRetry={load} />;
+
+  const cards = [
+    { label: "Total users", value: stats.users, icon: Users },
+    { label: "Total products", value: stats.products, icon: Package },
+    { label: "Pending ads", value: stats.pendingAds, icon: Megaphone },
+    { label: "Pending reports", value: stats.pendingReports, icon: Flag },
+    { label: "Total revenue", value: money(stats.revenue), icon: CreditCard },
+    { label: "Transactions", value: stats.transactions, icon: CreditCard },
+  ];
 
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-5">Overview</h1>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
         {cards.map((c) => (
           <div key={c.label} className="bg-white rounded-2xl border border-gray-100 p-5">
             <div className="w-9 h-9 rounded-lg flex items-center justify-center mb-3" style={{ backgroundColor: `${COLORS.primary}14` }}>
@@ -1761,7 +1903,15 @@ function AdminOverview() {
   );
 }
 
-function AdminTable({ resource, columns, title, searchable }) {
+function renderCell(value) {
+  if (value === null || value === undefined) return "—";
+  if (typeof value === "object") return value.name || value.username || value.title || JSON.stringify(value);
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
+
+/* Generic admin table for resources with simple GET (list) + optional DELETE */
+function AdminTable({ resource, columns, title, searchable, deletable, renderActions }) {
   const toast = useToast();
   const [rows, setRows] = useState([]);
   const [status, setStatus] = useState("loading");
@@ -1774,8 +1924,8 @@ function AdminTable({ resource, columns, title, searchable }) {
     try {
       const q = new URLSearchParams({ page: String(page), limit: String(pageSize) });
       if (search) q.set("search", search);
-      const data = await api(`/admin/${resource}?${q.toString()}`);
-      setRows(data.items || data[resource] || data.data || []);
+      const { data } = await api(`/admin/${resource}?${q.toString()}`);
+      setRows(data || []);
       setStatus("ready");
     } catch (e) {
       setStatus("error");
@@ -1785,6 +1935,7 @@ function AdminTable({ resource, columns, title, searchable }) {
   useEffect(() => { load(); }, [load]);
 
   const remove = async (id) => {
+    if (!window.confirm("Delete this permanently?")) return;
     try {
       await api(`/admin/${resource}/${id}`, { method: "DELETE" });
       toast.push("Removed", "success");
@@ -1820,23 +1971,30 @@ function AdminTable({ resource, columns, title, searchable }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-gray-100 text-left text-gray-400">
-                  {columns.map((c) => <th key={c} className="px-4 py-3 font-medium capitalize whitespace-nowrap">{c}</th>)}
-                  <th className="px-4 py-3"></th>
+                  {columns.map((c) => <th key={c} className="px-4 py-3 font-medium capitalize whitespace-nowrap">{c.replace(/_/g, " ")}</th>)}
+                  {(deletable || renderActions) && <th className="px-4 py-3"></th>}
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r) => (
-                  <tr key={r.id || r._id} className="border-b border-gray-50 last:border-0">
+                  <tr key={r.id} className="border-b border-gray-50 last:border-0">
                     {columns.map((c) => (
                       <td key={c} className="px-4 py-3 text-gray-700 whitespace-nowrap max-w-[220px] truncate">
-                        {typeof r[c] === "object" && r[c] !== null ? (r[c].name || r[c].username || JSON.stringify(r[c])) : String(r[c] ?? "—")}
+                        {c === "price" || c === "amount" ? money(r[c]) : renderCell(r[c])}
                       </td>
                     ))}
-                    <td className="px-4 py-3 text-right">
-                      <button onClick={() => remove(r.id || r._id)} className="text-red-400 hover:text-red-600">
-                        <Trash2 size={15} />
-                      </button>
-                    </td>
+                    {(deletable || renderActions) && (
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        <div className="flex items-center gap-2 justify-end">
+                          {renderActions && renderActions(r, load)}
+                          {deletable && (
+                            <button onClick={() => remove(r.id)} className="text-red-400 hover:text-red-600">
+                              <Trash2 size={15} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -1860,8 +2018,132 @@ function AdminTable({ resource, columns, title, searchable }) {
   );
 }
 
+/* Users: PATCH /admin/users/:id/suspend|unsuspend, DELETE /admin/users/:id */
+function AdminUsersTable() {
+  const toast = useToast();
+  const suspendUser = async (id, suspend, reload) => {
+    try {
+      if (suspend) {
+        const reason = window.prompt("Reason for suspension (optional):") || "";
+        await api(`/admin/users/${id}/suspend`, { method: "PATCH", body: { reason } });
+      } else {
+        await api(`/admin/users/${id}/unsuspend`, { method: "PATCH" });
+      }
+      toast.push(suspend ? "User suspended" : "User unsuspended", "success");
+      reload();
+    } catch (e) {
+      toast.push(e.message, "error");
+    }
+  };
+
+  return (
+    <AdminTable
+      resource="users"
+      columns={["username", "full_name", "email", "phone", "is_suspended", "created_at"]}
+      title="Users"
+      searchable
+      deletable
+      renderActions={(r, reload) => (
+        <button
+          onClick={() => suspendUser(r.id, !r.is_suspended, reload)}
+          className="text-xs font-semibold px-2 py-1 rounded-md border"
+          style={r.is_suspended ? { color: COLORS.secondary, borderColor: COLORS.secondary } : { color: "#B45309", borderColor: "#FCD34D" }}
+        >
+          {r.is_suspended ? "Unsuspend" : "Suspend"}
+        </button>
+      )}
+    />
+  );
+}
+
+/* Reports: PATCH /admin/reports/:id/resolve|dismiss — no delete endpoint */
+function AdminReportsTable() {
+  const toast = useToast();
+  const act = async (id, action, reload) => {
+    try {
+      const admin_notes = window.prompt(`Notes for this ${action} (optional):`) || "";
+      await api(`/admin/reports/${id}/${action}`, { method: "PATCH", body: { admin_notes } });
+      toast.push(action === "resolve" ? "Report resolved" : "Report dismissed", "success");
+      reload();
+    } catch (e) {
+      toast.push(e.message, "error");
+    }
+  };
+
+  return (
+    <AdminTable
+      resource="reports"
+      columns={["reason", "status", "reporter", "target_product", "created_at"]}
+      title="Reports"
+      searchable={false}
+      renderActions={(r, reload) =>
+        r.status === "pending" && (
+          <div className="flex gap-1.5">
+            <button onClick={() => act(r.id, "resolve", reload)} className="text-xs font-semibold px-2 py-1 rounded-md border" style={{ color: COLORS.secondary, borderColor: COLORS.secondary }}>
+              Resolve
+            </button>
+            <button onClick={() => act(r.id, "dismiss", reload)} className="text-xs font-semibold px-2 py-1 rounded-md border text-gray-500 border-gray-300">
+              Dismiss
+            </button>
+          </div>
+        )
+      }
+    />
+  );
+}
+
+/* Advertisements: PATCH approve/reject/pause, DELETE */
+function AdminAdsTable() {
+  const toast = useToast();
+  const act = async (id, action, reload) => {
+    try {
+      if (action === "reject") {
+        const reason = window.prompt("Reason for rejection:");
+        if (!reason) return;
+        await api(`/admin/advertisements/${id}/reject`, { method: "PATCH", body: { reason } });
+      } else {
+        await api(`/admin/advertisements/${id}/${action}`, { method: "PATCH" });
+      }
+      toast.push(`Advertisement ${action}d`, "success");
+      reload();
+    } catch (e) {
+      toast.push(e.message, "error");
+    }
+  };
+
+  return (
+    <AdminTable
+      resource="advertisements"
+      columns={["title", "user", "payment_status", "approval_status", "created_at"]}
+      title="Advertisements"
+      searchable
+      deletable
+      renderActions={(r, reload) => (
+        <div className="flex gap-1.5">
+          {r.approval_status === "pending" && (
+            <>
+              <button onClick={() => act(r.id, "approve", reload)} className="p-1 rounded-md border text-white" style={{ backgroundColor: COLORS.secondary, borderColor: COLORS.secondary }} title="Approve">
+                <Check size={13} />
+              </button>
+              <button onClick={() => act(r.id, "reject", reload)} className="p-1 rounded-md border text-red-500 border-red-200" title="Reject">
+                <Ban size={13} />
+              </button>
+            </>
+          )}
+          {r.approval_status === "approved" && (
+            <button onClick={() => act(r.id, "pause", reload)} className="p-1 rounded-md border text-amber-600 border-amber-200" title="Pause">
+              <Pause size={13} />
+            </button>
+          )}
+        </div>
+      )}
+    />
+  );
+}
+
 function AdminCategories() {
   const toast = useToast();
+  const { reload: reloadGlobalCategories } = useCategories();
   const [categories, setCategories] = useState([]);
   const [status, setStatus] = useState("loading");
   const [newCat, setNewCat] = useState("");
@@ -1869,8 +2151,8 @@ function AdminCategories() {
   const load = useCallback(async () => {
     setStatus("loading");
     try {
-      const data = await api("/admin/categories");
-      setCategories(data.categories || data.items || data || []);
+      const { data } = await api("/admin/categories");
+      setCategories(data || []);
       setStatus("ready");
     } catch (e) {
       setStatus("error");
@@ -1886,16 +2168,19 @@ function AdminCategories() {
       setNewCat("");
       toast.push("Category added", "success");
       load();
+      reloadGlobalCategories();
     } catch (e) {
       toast.push(e.message, "error");
     }
   };
 
   const remove = async (id) => {
+    if (!window.confirm("Delete this category?")) return;
     try {
       await api(`/admin/categories/${id}`, { method: "DELETE" });
       toast.push("Category removed", "success");
       load();
+      reloadGlobalCategories();
     } catch (e) {
       toast.push(e.message, "error");
     }
@@ -1918,9 +2203,9 @@ function AdminCategories() {
         {status === "error" && <ErrorState message="Couldn't load categories." onRetry={load} />}
         {status === "ready" && categories.length === 0 && <EmptyState icon={Tag} title="No categories yet" />}
         {status === "ready" && categories.map((c) => (
-          <div key={c.id || c._id || c.name} className="flex items-center justify-between px-4 py-2.5 border-b border-gray-50 last:border-0">
-            <span className="text-sm text-gray-700">{c.name}</span>
-            <button onClick={() => remove(c.id || c._id)} className="text-red-400 hover:text-red-600"><Trash2 size={15} /></button>
+          <div key={c.id} className="flex items-center justify-between px-4 py-2.5 border-b border-gray-50 last:border-0">
+            <span className="text-sm text-gray-700">{c.icon ? `${c.icon} ` : ""}{c.name}</span>
+            <button onClick={() => remove(c.id)} className="text-red-400 hover:text-red-600"><Trash2 size={15} /></button>
           </div>
         ))}
       </div>
@@ -1928,17 +2213,20 @@ function AdminCategories() {
   );
 }
 
-function AdminAdPricing() {
+/* Ad pricing == /admin/durations (duration_days, price, is_active). Edited per-row (no bulk update endpoint). */
+function AdminDurations() {
   const toast = useToast();
-  const [pricing, setPricing] = useState(AD_PLANS);
+  const [durations, setDurations] = useState([]);
   const [status, setStatus] = useState("loading");
-  const [saving, setSaving] = useState(false);
+  const [savingId, setSavingId] = useState(null);
+  const [newDuration, setNewDuration] = useState({ duration_days: "", price: "" });
+  const [creating, setCreating] = useState(false);
 
   const load = useCallback(async () => {
     setStatus("loading");
     try {
-      const data = await api("/admin/ad-pricing");
-      setPricing(data.plans || data.pricing || AD_PLANS);
+      const { data } = await api("/admin/durations");
+      setDurations(data || []);
       setStatus("ready");
     } catch (e) {
       setStatus("error");
@@ -1947,44 +2235,100 @@ function AdminAdPricing() {
 
   useEffect(() => { load(); }, [load]);
 
-  const updatePrice = (key, price) => setPricing((p) => p.map((pl) => (pl.key === key ? { ...pl, price: Number(price) } : pl)));
+  const updateField = (id, field, value) =>
+    setDurations((ds) => ds.map((d) => (d.id === id ? { ...d, [field]: value } : d)));
 
-  const save = async () => {
-    setSaving(true);
+  const save = async (d) => {
+    setSavingId(d.id);
     try {
-      await api("/admin/ad-pricing", { method: "PUT", body: { plans: pricing } });
-      toast.push("Ad pricing updated", "success");
+      await api(`/admin/durations/${d.id}`, {
+        method: "PUT",
+        body: { duration_days: Number(d.duration_days), price: Number(d.price), is_active: d.is_active },
+      });
+      toast.push("Duration updated", "success");
+      load();
     } catch (e) {
       toast.push(e.message, "error");
     } finally {
-      setSaving(false);
+      setSavingId(null);
+    }
+  };
+
+  const remove = async (id) => {
+    if (!window.confirm("Delete this duration plan?")) return;
+    try {
+      await api(`/admin/durations/${id}`, { method: "DELETE" });
+      toast.push("Duration removed", "success");
+      load();
+    } catch (e) {
+      toast.push(e.message, "error");
+    }
+  };
+
+  const create = async () => {
+    if (!newDuration.duration_days || !newDuration.price) {
+      toast.push("Enter both duration and price.", "error");
+      return;
+    }
+    setCreating(true);
+    try {
+      await api("/admin/durations", {
+        method: "POST",
+        body: { duration_days: Number(newDuration.duration_days), price: Number(newDuration.price), is_active: true },
+      });
+      setNewDuration({ duration_days: "", price: "" });
+      toast.push("Duration created", "success");
+      load();
+    } catch (e) {
+      toast.push(e.message, "error");
+    } finally {
+      setCreating(false);
     }
   };
 
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-900 mb-5">Ad Pricing</h1>
+
+      <div className="bg-white rounded-2xl border border-gray-100 p-5 mb-5 flex flex-wrap items-end gap-3">
+        <div className="w-28">
+          <span className="block text-xs font-medium text-gray-500 mb-1">Days</span>
+          <input type="number" value={newDuration.duration_days} onChange={(e) => setNewDuration((d) => ({ ...d, duration_days: e.target.value }))} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#5B3FC6]/20" />
+        </div>
+        <div className="w-32">
+          <span className="block text-xs font-medium text-gray-500 mb-1">Price (₦)</span>
+          <input type="number" value={newDuration.price} onChange={(e) => setNewDuration((d) => ({ ...d, price: e.target.value }))} className="w-full rounded-xl border border-gray-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#5B3FC6]/20" />
+        </div>
+        <Button onClick={create} disabled={creating}><Plus size={16} /> {creating ? "Adding..." : "Add plan"}</Button>
+      </div>
+
       {status === "loading" ? (
         <div className="space-y-3">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-14" />)}</div>
       ) : status === "error" ? (
         <ErrorState message="Couldn't load ad pricing." onRetry={load} />
+      ) : durations.length === 0 ? (
+        <EmptyState icon={CreditCard} title="No duration plans yet" />
       ) : (
-        <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-4">
-          {pricing.map((p) => (
-            <div key={p.key} className="flex items-center justify-between gap-4">
-              <span className="text-sm font-medium text-gray-700 w-24">{p.label}</span>
-              <div className="relative flex-1 max-w-[160px]">
-                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₦</span>
-                <input
-                  type="number"
-                  value={p.price}
-                  onChange={(e) => updatePrice(p.key, e.target.value)}
-                  className="w-full rounded-xl border border-gray-200 pl-7 pr-3 py-2 text-sm outline-none focus:ring-2 focus:ring-[#5B3FC6]/20"
-                />
+        <div className="bg-white rounded-2xl border border-gray-100 p-5 space-y-3">
+          {durations.map((d) => (
+            <div key={d.id} className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-1.5">
+                <input type="number" value={d.duration_days} onChange={(e) => updateField(d.id, "duration_days", e.target.value)} className="w-16 rounded-lg border border-gray-200 px-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#5B3FC6]/20" />
+                <span className="text-xs text-gray-500">days</span>
               </div>
+              <div className="relative w-32">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">₦</span>
+                <input type="number" value={d.price} onChange={(e) => updateField(d.id, "price", e.target.value)} className="w-full rounded-lg border border-gray-200 pl-6 pr-2 py-1.5 text-sm outline-none focus:ring-2 focus:ring-[#5B3FC6]/20" />
+              </div>
+              <label className="flex items-center gap-1.5 text-xs text-gray-500">
+                <input type="checkbox" checked={!!d.is_active} onChange={(e) => updateField(d.id, "is_active", e.target.checked)} /> Active
+              </label>
+              <Button onClick={() => save(d)} disabled={savingId === d.id} className="!py-1.5 !px-3 ml-auto">
+                {savingId === d.id ? "Saving..." : "Save"}
+              </Button>
+              <button onClick={() => remove(d.id)} className="text-red-400 hover:text-red-600"><Trash2 size={15} /></button>
             </div>
           ))}
-          <Button onClick={save} disabled={saving} className="mt-2">{saving ? "Saving..." : "Save pricing"}</Button>
         </div>
       )}
     </div>
@@ -1998,7 +2342,8 @@ function AppShell() {
   const [nav, setNav] = useState({ page: "home", params: {} });
   const [query, setQuery] = useState("");
   const [activeSearch, setActiveSearch] = useState("");
-  const [favorites, setFavorites] = useState(new Set());
+  const [favoriteProductIds, setFavoriteProductIds] = useState(new Set());
+  const [favoriteSellerIds, setFavoriteSellerIds] = useState(new Set());
   const { user } = useAuth();
   const toast = useToast();
 
@@ -2007,32 +2352,43 @@ function AppShell() {
     window.scrollTo({ top: 0, behavior: "instant" in window ? "instant" : "auto" });
   };
 
-  useEffect(() => {
+  const loadFavoriteIds = useCallback(async () => {
     if (!user) {
-      setFavorites(new Set());
+      setFavoriteProductIds(new Set());
+      setFavoriteSellerIds(new Set());
       return;
     }
-    api("/favorites/ids")
-      .then((d) => setFavorites(new Set((d.productIds || d.ids || []).map(String))))
-      .catch(() => {});
+    try {
+      const [prodRes, sellerRes] = await Promise.all([api("/favorites/products"), api("/favorites/sellers")]);
+      setFavoriteProductIds(new Set((prodRes.data || []).map((f) => f.product?.id).filter(Boolean)));
+      setFavoriteSellerIds(new Set((sellerRes.data || []).map((f) => f.seller?.id).filter(Boolean)));
+    } catch (e) {
+      // silent — favorites are non-critical to first paint
+    }
   }, [user]);
+
+  useEffect(() => {
+    loadFavoriteIds();
+  }, [loadFavoriteIds]);
 
   const toggleFavorite = async (id, type) => {
     if (!user) return go("login");
-    const key = String(id);
-    const isFav = favorites.has(key);
-    setFavorites((prev) => {
+    const setState = type === "product" ? setFavoriteProductIds : setFavoriteSellerIds;
+    const currentSet = type === "product" ? favoriteProductIds : favoriteSellerIds;
+    const isFav = currentSet.has(id);
+    setState((prev) => {
       const next = new Set(prev);
-      isFav ? next.delete(key) : next.add(key);
+      isFav ? next.delete(id) : next.add(id);
       return next;
     });
+    const endpoint = type === "product" ? `/favorites/product/${id}` : `/favorites/seller/${id}`;
     try {
-      await api(`/favorites/${type}s/${id}`, { method: isFav ? "DELETE" : "POST" });
+      await api(endpoint, { method: isFav ? "DELETE" : "POST" });
       toast.push(isFav ? "Removed from favorites" : "Added to favorites", "success");
     } catch (e) {
-      setFavorites((prev) => {
+      setState((prev) => {
         const next = new Set(prev);
-        isFav ? next.add(key) : next.delete(key);
+        isFav ? next.add(id) : next.delete(id);
         return next;
       });
       toast.push(e.message, "error");
@@ -2046,14 +2402,14 @@ function AppShell() {
 
   let content;
   switch (nav.page) {
-    case "home": content = <HomePage go={go} search={activeSearch} favorites={favorites} toggleFavorite={toggleFavorite} />; break;
-    case "product": content = <ProductDetailPage params={nav.params} go={go} favorites={favorites} toggleFavorite={toggleFavorite} />; break;
-    case "shop": content = <ShopPage params={nav.params} go={go} favorites={favorites} toggleFavorite={toggleFavorite} />; break;
+    case "home": content = <HomePage go={go} search={activeSearch} favoriteProductIds={favoriteProductIds} toggleFavorite={toggleFavorite} />; break;
+    case "product": content = <ProductDetailPage params={nav.params} go={go} favoriteProductIds={favoriteProductIds} toggleFavorite={toggleFavorite} />; break;
+    case "shop": content = <ShopPage params={nav.params} go={go} favoriteSellerIds={favoriteSellerIds} toggleFavorite={toggleFavorite} />; break;
     case "register": content = <RegisterPage go={go} />; break;
     case "login": content = <LoginPage go={go} />; break;
     case "forgot": content = <ForgotPasswordPage go={go} />; break;
     case "sell": content = <SellPage go={go} />; break;
-    case "favorites": content = <FavoritesPage go={go} favorites={favorites} toggleFavorite={toggleFavorite} />; break;
+    case "favorites": content = <FavoritesPage go={go} favoriteProductIds={favoriteProductIds} favoriteSellerIds={favoriteSellerIds} toggleFavorite={toggleFavorite} />; break;
     case "profile": content = <ProfilePage go={go} />; break;
     case "advertise": content = <AdvertisePage go={go} />; break;
     case "admin": content = <AdminDashboard go={go} />; break;
@@ -2061,10 +2417,8 @@ function AppShell() {
     case "about": content = <AboutPage />; break;
     case "privacy": content = <PrivacyPage />; break;
     case "terms": content = <TermsPage />; break;
-    default: content = <HomePage go={go} search={activeSearch} favorites={favorites} toggleFavorite={toggleFavorite} />;
+    default: content = <HomePage go={go} search={activeSearch} favoriteProductIds={favoriteProductIds} toggleFavorite={toggleFavorite} />;
   }
-
-  const hideChrome = false;
 
   return (
     <div className="min-h-screen flex flex-col" style={{ backgroundColor: COLORS.bg }}>
@@ -2074,10 +2428,10 @@ function AppShell() {
         @keyframes fadein { from { opacity: 0; transform: translateY(-6px);} to { opacity:1; transform:none; } }
         select:focus { outline: none; }
       `}</style>
-      {!hideChrome && <Header nav={nav} go={go} query={query} setQuery={setQuery} onSearchSubmit={onSearchSubmit} />}
+      <Header nav={nav} go={go} query={query} setQuery={setQuery} onSearchSubmit={onSearchSubmit} />
       <main className="flex-1">{content}</main>
-      {!hideChrome && <Footer go={go} />}
-      {!hideChrome && <BottomNav nav={nav} go={go} />}
+      <Footer go={go} />
+      <BottomNav nav={nav} go={go} />
     </div>
   );
 }
@@ -2086,7 +2440,9 @@ export default function App() {
   return (
     <ToastProvider>
       <AuthProvider>
-        <AppShell />
+        <CategoriesProvider>
+          <AppShell />
+        </CategoriesProvider>
       </AuthProvider>
     </ToastProvider>
   );
