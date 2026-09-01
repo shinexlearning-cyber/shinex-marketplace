@@ -182,6 +182,60 @@ router.get('/:username/shop', async (req, res) => {
   }
 });
 
+// GET /api/users/me/stats - User statistics
+router.get('/me/stats', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Count products
+    const { count: productsCount, error: productsError } = await supabase
+      .from('products')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    if (productsError) {
+      console.error('Products count error:', productsError);
+    }
+
+    // Count favorites (both products and sellers)
+    const { count: favoritesCount, error: favoritesError } = await supabase
+      .from('favorites')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+
+    if (favoritesError) {
+      console.error('Favorites count error:', favoritesError);
+    }
+
+    // Sum of views across all user's products
+    const { data: viewsData, error: viewsError } = await supabase
+      .from('products')
+      .select('views_count')
+      .eq('user_id', userId);
+
+    if (viewsError) {
+      console.error('Views count error:', viewsError);
+    }
+
+    const totalViews = viewsData?.reduce((sum, p) => sum + (p.views_count || 0), 0) || 0;
+
+    res.json({
+      success: true,
+      data: {
+        products: productsCount || 0,
+        favorites: favoritesCount || 0,
+        views: totalViews
+      }
+    });
+  } catch (error) {
+    console.error('Get user stats error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch user statistics'
+    });
+  }
+});
+
 // Update profile
 router.put('/me', authMiddleware, async (req, res) => {
   try {
