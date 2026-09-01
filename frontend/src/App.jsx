@@ -10,32 +10,12 @@ import {
 /* ============================================================
    SHINEX MARKETPLACE
    Single-file React application with client-side state routing
-   (no react-router available in this environment — page switches
-   are handled through the `nav` state below).
-
-   Wired to the real SHINEX backend (Express + Supabase). Every
-   endpoint below matches backend/API_DOCUMENTATION.md and the
-   route files exactly — nothing here is invented. Notable real
-   constraints reflected in this file:
-   - All responses are enveloped as { success, message, data }.
-     The api() helper below unwraps `data` for callers.
-   - Product creation needs a real category_id (from
-     GET /products/categories/all), not a free-text category.
-   - Favorites has no bulk "my favorite ids" endpoint, so favorite
-     state is derived from GET /favorites/products + /favorites/sellers.
-   - There is no public "active advertisements" endpoint, so the
-     homepage has no sponsored-ads rail — nothing serves that data.
-   - There is no GET /admin/stats endpoint; the admin overview is
-     composed from the totals already returned by /admin/users,
-     /admin/products, /admin/advertisements, /admin/reports and
-     /admin/payments/stats.
-   - Ad pricing is managed via /admin/durations (duration_days,
-     price, is_active) — not a bespoke "ad-pricing" resource.
-   - There's no "my profile stats" endpoint; Profile page stats are
-     derived from the shop + favorites endpoints that do exist.
    ============================================================ */
 
-const API_BASE = "https://shinex-marketplace.onrender.com/api";
+// Environment-aware API base URL
+const API_BASE = process.env.NODE_ENV === 'production'
+  ? "https://shinex-marketplace.onrender.com/api"
+  : "http://localhost:5000/api";
 
 const COLORS = {
   primary: "#5B3FC6",
@@ -47,7 +27,6 @@ const COLORS = {
 
 /* ------------------------------------------------------------
    API HELPER
-   Backend envelope: { success: boolean, message?: string, data?: any }
    ------------------------------------------------------------ */
 async function api(path, { method = "GET", body, auth = true, formData = false } = {}) {
   const headers = {};
@@ -66,19 +45,26 @@ async function api(path, { method = "GET", body, auth = true, formData = false }
   } catch (e) {
     throw new Error("Can't reach the server. Check your connection and try again.");
   }
+  
   let payload = null;
   try {
     payload = await res.json();
   } catch (e) {
     payload = null;
   }
+  
+  // Handle 401 Unauthorized - session expired
+  if (res.status === 401) {
+    localStorage.removeItem("shinex_token");
+    throw new Error("Your session has expired. Please log in again.");
+  }
+  
   if (!res.ok || (payload && payload.success === false)) {
     const msg =
       (payload && (payload.message || (Array.isArray(payload.errors) && payload.errors[0]))) ||
       `Request failed (${res.status})`;
     throw new Error(msg);
   }
-  // Return the full payload so callers can read data/pagination/message as needed.
   return payload || {};
 }
 
@@ -128,9 +114,6 @@ function ToastProvider({ children }) {
 
 /* ------------------------------------------------------------
    AUTH CONTEXT
-   Backend user fields: id, username, email, full_name, phone,
-   avatar_url, bio, location, whatsapp, shop_name,
-   shop_description, is_admin, is_suspended, created_at
    ------------------------------------------------------------ */
 const AuthContext = createContext(null);
 function useAuth() {
@@ -189,8 +172,7 @@ function AuthProvider({ children }) {
 }
 
 /* ------------------------------------------------------------
-   CATEGORIES CONTEXT — GET /products/categories/all
-   { id, name, slug, description, icon, is_active }
+   CATEGORIES CONTEXT
    ------------------------------------------------------------ */
 const CategoriesContext = createContext({ categories: [], status: "loading" });
 function useCategories() {
@@ -548,10 +530,8 @@ function BottomNav({ nav, go }) {
 
 /* ------------------------------------------------------------
    PRODUCT CARD
-   Product shape (list): id, name, price, primary_image, location,
-   seller { username, full_name, shop_name, avatar_url, whatsapp }
    ------------------------------------------------------------ */
-function ProductCard({ product, go, favoriteProductIds, toggleFavorite }) {
+function ProductCard({ product, go, favoriteProductIds = new Set(), toggleFavorite }) {
   const id = product.id;
   const isFav = favoriteProductIds.has(id);
   const image = product.primary_image || (product.images && product.images[0]?.image_url);
@@ -604,6 +584,19 @@ function HomePage({ go, search, favoriteProductIds, toggleFavorite }) {
   const [products, setProducts] = useState([]);
   const [status, setStatus] = useState("loading");
   const [activeCategory, setActiveCategory] = useState("all");
+  const [ads, setAds] = useState([]);
+  const [adsStatus, setAdsStatus] = useState("loading");
+
+  const loadAds = useCallback(async () => {
+    setAdsStatus("loading");
+    try {
+      const { data } = await api("/advertisements/active", { auth: false });
+      setAds(data || []);
+      setAdsStatus("ready");
+    } catch (e) {
+      setAdsStatus("error");
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setStatus("loading");
@@ -621,7 +614,15 @@ function HomePage({ go, search, favoriteProductIds, toggleFavorite }) {
 
   useEffect(() => {
     load();
-  }, [load]);
+    loadAds();
+  }, [load, loadAds]);
+
+  const selectedCategory = categories.find((c) => c.id === activeCategory);
+  const pageTitle = search 
+    ? `Results for "${search}"` 
+    : activeCategory !== "all" 
+      ? selectedCategory?.name || "Listings" 
+      : "Latest listings";
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-6">
@@ -654,12 +655,36 @@ function HomePage({ go, search, favoriteProductIds, toggleFavorite }) {
         ))}
       </div>
 
+      {/* Sponsored Advertisements */}
+      {adsStatus === "ready" && ads.length > 0 && (
+        <section className="mt-6">
+          <h2 className="font-bold text-lg text-gray-800 mb-3">Sponsored</h2>
+          <div className="flex gap-4 overflow-x-auto pb-2 no-scrollbar">
+            {ads.map((ad) => (
+              <div
+                key={ad.id}
+                className="shrink-0 w-64 rounded-2xl overflow-hidden border border-gray-100 text-left bg-white shadow-sm"
+              >
+                <div className="w-full h-32 bg-gray-100">
+                  {ad.image_url && <img src={ad.image_url} alt={ad.title} className="w-full h-full object-cover" />}
+                </div>
+                <div className="p-3">
+                  <p className="font-semibold text-sm text-gray-800 truncate">{ad.title}</p>
+                  <p className="text-xs text-gray-500 line-clamp-2 mt-0.5">{ad.description}</p>
+                  {ad.user && (
+                    <p className="text-[10px] text-gray-400 mt-1">by {ad.user.shop_name || ad.user.username}</p>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       {/* Product Grid */}
       <section className="mt-8">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="font-bold text-lg text-gray-800">
-            {search ? `Results for "${search}"` : activeCategory !== "all" ? categories.find((c) => c.id === activeCategory)?.name || "Listings" : "Latest listings"}
-          </h2>
+          <h2 className="font-bold text-lg text-gray-800">{pageTitle}</h2>
         </div>
 
         {status === "loading" && (
@@ -692,7 +717,7 @@ function HomePage({ go, search, favoriteProductIds, toggleFavorite }) {
 }
 
 /* ------------------------------------------------------------
-   PAGE: PRODUCT DETAIL — GET /products/:id
+   PAGE: PRODUCT DETAIL
    ------------------------------------------------------------ */
 function ProductDetailPage({ params, go, favoriteProductIds, toggleFavorite }) {
   const toast = useToast();
@@ -890,7 +915,7 @@ function Modal({ title, children, onClose }) {
 }
 
 /* ------------------------------------------------------------
-   PAGE: SHOP — GET /users/:username + GET /users/:username/shop
+   PAGE: SHOP
    ------------------------------------------------------------ */
 function ShopPage({ params, go, favoriteSellerIds, toggleFavorite }) {
   const { user } = useAuth();
@@ -976,7 +1001,7 @@ function ShopPage({ params, go, favoriteSellerIds, toggleFavorite }) {
 }
 
 /* ------------------------------------------------------------
-   PAGE: REGISTER — POST /auth/register
+   PAGE: REGISTER
    ------------------------------------------------------------ */
 function RegisterPage({ go }) {
   const { register } = useAuth();
@@ -1065,7 +1090,7 @@ function AuthLayout({ title, subtitle, children, go, switchLabel, switchCta, swi
 }
 
 /* ------------------------------------------------------------
-   PAGE: LOGIN — POST /auth/login
+   PAGE: LOGIN
    ------------------------------------------------------------ */
 function LoginPage({ go }) {
   const { login } = useAuth();
@@ -1157,14 +1182,12 @@ function ForgotPasswordPage({ go }) {
 }
 
 /* ------------------------------------------------------------
-   PAGE: SELL — POST /products (multipart, field "images", max 5)
-   category_id must be a real category id from
-   GET /products/categories/all.
+   PAGE: SELL
    ------------------------------------------------------------ */
 function SellPage({ go }) {
   const { user } = useAuth();
   const toast = useToast();
-  const { categories, status: catStatus } = useCategories();
+  const { categories, status: catStatus, reload: reloadCategories } = useCategories();
   const [form, setForm] = useState({ name: "", price: "", categoryId: "", condition: "used", description: "", location: "" });
   const [images, setImages] = useState([]);
   const [errors, setErrors] = useState({});
@@ -1175,7 +1198,6 @@ function SellPage({ go }) {
     if (categories.length && !form.categoryId) {
       setForm((f) => ({ ...f, categoryId: categories[0].id }));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categories]);
 
   if (!user) {
@@ -1267,7 +1289,12 @@ function SellPage({ go }) {
 
         <Select label="Category" value={form.categoryId} onChange={set("categoryId")} error={errors.category} disabled={catStatus === "loading"}>
           {catStatus === "loading" && <option value="">Loading categories...</option>}
-          {catStatus === "error" && <option value="">Couldn't load categories</option>}
+          {catStatus === "error" && (
+            <option value="">
+              Error loading categories — 
+              <button type="button" onClick={reloadCategories} className="text-[#5B3FC6] ml-1">retry</button>
+            </option>
+          )}
           {categories.map((c) => (
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
@@ -1291,7 +1318,7 @@ function SellPage({ go }) {
 }
 
 /* ------------------------------------------------------------
-   PAGE: FAVORITES — GET /favorites/products, GET /favorites/sellers
+   PAGE: FAVORITES
    ------------------------------------------------------------ */
 function FavoritesPage({ go, favoriteProductIds, favoriteSellerIds, toggleFavorite }) {
   const { user } = useAuth();
@@ -1380,10 +1407,7 @@ function FavoritesPage({ go, favoriteProductIds, favoriteSellerIds, toggleFavori
 }
 
 /* ------------------------------------------------------------
-   PAGE: PROFILE — GET/PUT /users/me
-   Stats derived from GET /users/:username/shop (product_count)
-   and GET /favorites/products (pagination.total) — there is no
-   dedicated "my stats" endpoint.
+   PAGE: PROFILE
    ------------------------------------------------------------ */
 function ProfilePage({ go }) {
   const { user, logout, refresh } = useAuth();
@@ -1392,6 +1416,7 @@ function ProfilePage({ go }) {
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [stats, setStats] = useState(null);
+  const [statsLoading, setStatsLoading] = useState(true);
 
   useEffect(() => {
     if (user) {
@@ -1402,6 +1427,7 @@ function ProfilePage({ go }) {
         whatsapp: user.whatsapp || "",
         shop_name: user.shop_name || "",
       });
+      setStatsLoading(true);
       Promise.all([
         api(`/users/${user.username}/shop?limit=1`, { auth: false }).catch(() => null),
         api(`/favorites/products?limit=1`).catch(() => null),
@@ -1410,6 +1436,7 @@ function ProfilePage({ go }) {
           listings: shopRes?.data?.shop?.product_count ?? shopRes?.data?.pagination?.total ?? null,
           favorites: favRes?.data ? favRes.pagination?.total ?? favRes.data.length : null,
         });
+        setStatsLoading(false);
       });
     }
   }, [user]);
@@ -1450,7 +1477,12 @@ function ProfilePage({ go }) {
           )}
         </div>
 
-        {stats && (
+        {statsLoading ? (
+          <div className="grid grid-cols-2 gap-3 mt-6">
+            <Skeleton className="h-16" />
+            <Skeleton className="h-16" />
+          </div>
+        ) : stats && (
           <div className="grid grid-cols-2 gap-3 mt-6">
             {[{ l: "Listings", v: stats.listings }, { l: "Favorites", v: stats.favorites }].map((s) => (
               <div key={s.l} className="text-center bg-gray-50 rounded-xl py-3">
@@ -1495,8 +1527,7 @@ function ProfilePage({ go }) {
 }
 
 /* ------------------------------------------------------------
-   PAGE: ADVERTISE — GET /advertisements/pricing, POST /advertisements,
-   then POST /advertisements/:id/pay to get the Paystack authorization_url.
+   PAGE: ADVERTISE
    ------------------------------------------------------------ */
 function AdvertisePage({ go }) {
   const { user } = useAuth();
@@ -1514,7 +1545,8 @@ function AdvertisePage({ go }) {
     setPlansStatus("loading");
     try {
       const { data } = await api("/advertisements/pricing", { auth: false });
-      setPlans(data || []);
+      // Filter only active plans (backend should already do this)
+      setPlans((data || []).filter(p => p.is_active !== false));
       if (data && data.length) setPlanId(data[0].id);
       setPlansStatus("ready");
     } catch (e) {
@@ -1580,7 +1612,10 @@ function AdvertisePage({ go }) {
         </div>
       )}
       {plansStatus === "error" && <ErrorState message="Couldn't load advertising plans." onRetry={loadPricing} />}
-      {plansStatus === "ready" && (
+      {plansStatus === "ready" && plans.length === 0 && (
+        <EmptyState icon={Megaphone} title="No plans available" subtitle="Check back later for advertising options." />
+      )}
+      {plansStatus === "ready" && plans.length > 0 && (
         <div className="grid grid-cols-2 gap-3 mb-6">
           {plans.map((p) => (
             <button
@@ -1636,11 +1671,10 @@ function AdvertisePage({ go }) {
 
 /* ------------------------------------------------------------
    PAGE: CONTACT / ABOUT / PRIVACY / TERMS
-   POST /contact requires name, email, subject, message (10+ chars)
    ------------------------------------------------------------ */
 function ContactPage() {
   const toast = useToast();
-  const [form, setForm] = useState({ name: "", email: "", subject: "", message: "" });
+  const [form, setForm] = useState({ name: "", email: "", phone: "", subject: "", message: "" });
   const [loading, setLoading] = useState(false);
 
   const submit = async (e) => {
@@ -1653,7 +1687,7 @@ function ContactPage() {
     try {
       await api("/contact", { method: "POST", body: form, auth: false });
       toast.push("Message sent — we'll get back to you soon.", "success");
-      setForm({ name: "", email: "", subject: "", message: "" });
+      setForm({ name: "", email: "", phone: "", subject: "", message: "" });
     } catch (e) {
       toast.push(e.message, "error");
     } finally {
@@ -1688,6 +1722,7 @@ function ContactPage() {
         <form onSubmit={submit} className="bg-white rounded-2xl border border-gray-100 p-6 space-y-4">
           <Input label="Name" value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Your name" />
           <Input label="Email" type="email" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="you@example.com" />
+          <Input label="Phone (optional)" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} placeholder="+234..." />
           <Input label="Subject" value={form.subject} onChange={(e) => setForm((f) => ({ ...f, subject: e.target.value }))} placeholder="What's this about?" />
           <TextArea label="Message" rows={4} value={form.message} onChange={(e) => setForm((f) => ({ ...f, message: e.target.value }))} placeholder="How can we help?" />
           <Button className="w-full !py-3" disabled={loading}>{loading ? "Sending..." : "Send message"}</Button>
@@ -1776,8 +1811,75 @@ function TermsPage() {
 }
 
 /* ------------------------------------------------------------
-   ADMIN DASHBOARD
+   ADMIN DASHBOARD - IMPROVED RENDERCELL
    ------------------------------------------------------------ */
+
+// ===== FIXED renderCell with better object handling =====
+function renderCell(value) {
+  // Handle null/undefined
+  if (value === null || value === undefined) return "—";
+  
+  // Handle boolean
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  
+  // Handle numbers
+  if (typeof value === "number") {
+    return String(value);
+  }
+  
+  // Handle objects (nested data from Supabase joins)
+  if (typeof value === "object") {
+    // Try common display fields in order of preference
+    if (value.full_name) return value.full_name;      // User full name
+    if (value.shop_name) return value.shop_name;      // Shop name
+    if (value.name) return value.name;                // Category name, product name
+    if (value.username) return value.username;        // Username
+    if (value.title) return value.title;              // Ad title
+    if (value.email) return value.email;              // Email
+    
+    // If it has a single key, show that value
+    const keys = Object.keys(value);
+    if (keys.length === 1) {
+      return String(value[keys[0]]);
+    }
+    
+    // If it has multiple keys but no display field, show a summary
+    if (keys.length > 1) {
+      // For product: show name and price
+      if (value.price !== undefined) {
+        return `${value.name || "Item"} (${money(value.price)})`;
+      }
+      // For user: show username and role
+      if (value.username) {
+        return `${value.username}${value.is_admin ? " (Admin)" : ""}`;
+      }
+      // Fallback: show key-value pairs
+      return keys.slice(0, 2).map(k => `${k}: ${value[k]}`).join(", ");
+    }
+    
+    return "—";
+  }
+  
+  // Handle strings (check if it's a date)
+  if (typeof value === "string") {
+    // Check if it's an ISO date string
+    if (value.match(/^\d{4}-\d{2}-\d{2}/)) {
+      try {
+        return new Date(value).toLocaleDateString("en-NG", {
+          year: 'numeric',
+          month: 'short',
+          day: 'numeric'
+        });
+      } catch (e) {
+        return value;
+      }
+    }
+    return value;
+  }
+  
+  return String(value);
+}
+
 const ADMIN_SECTIONS = [
   { key: "overview", label: "Overview", icon: LayoutDashboard },
   { key: "users", label: "Users", icon: Users },
@@ -1843,6 +1945,7 @@ function AdminDashboard({ go }) {
   );
 }
 
+// ===== FIXED AdminOverview with Promise.allSettled =====
 function AdminOverview() {
   const [stats, setStats] = useState(null);
   const [status, setStatus] = useState("loading");
@@ -1850,20 +1953,26 @@ function AdminOverview() {
   const load = useCallback(async () => {
     setStatus("loading");
     try {
-      const [usersRes, productsRes, adsRes, reportsRes, paymentsRes] = await Promise.all([
+      const results = await Promise.allSettled([
         api("/admin/users?limit=1"),
         api("/admin/products?limit=1"),
         api("/admin/advertisements?approval=pending&limit=1"),
         api("/admin/reports?status=pending&limit=1"),
         api("/admin/payments/stats"),
       ]);
+
+      const getValue = (result, fallback) => {
+        if (result.status === "fulfilled") return result.value;
+        return fallback;
+      };
+
       setStats({
-        users: usersRes.pagination?.total ?? usersRes.data?.length ?? 0,
-        products: productsRes.pagination?.total ?? productsRes.data?.length ?? 0,
-        pendingAds: adsRes.pagination?.total ?? adsRes.data?.length ?? 0,
-        pendingReports: reportsRes.pagination?.total ?? reportsRes.data?.length ?? 0,
-        revenue: paymentsRes.data?.total_revenue ?? 0,
-        transactions: paymentsRes.data?.total_transactions ?? 0,
+        users: getValue(results[0], { pagination: { total: 0 } }).pagination?.total ?? 0,
+        products: getValue(results[1], { pagination: { total: 0 } }).pagination?.total ?? 0,
+        pendingAds: getValue(results[2], { pagination: { total: 0 } }).pagination?.total ?? 0,
+        pendingReports: getValue(results[3], { pagination: { total: 0 } }).pagination?.total ?? 0,
+        revenue: getValue(results[4], { data: { total_revenue: 0 } }).data?.total_revenue ?? 0,
+        transactions: getValue(results[4], { data: { total_transactions: 0 } }).data?.total_transactions ?? 0,
       });
       setStatus("ready");
     } catch (e) {
@@ -1903,14 +2012,7 @@ function AdminOverview() {
   );
 }
 
-function renderCell(value) {
-  if (value === null || value === undefined) return "—";
-  if (typeof value === "object") return value.name || value.username || value.title || JSON.stringify(value);
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  return String(value);
-}
-
-/* Generic admin table for resources with simple GET (list) + optional DELETE */
+// ===== AdminTable with improved renderCell =====
 function AdminTable({ resource, columns, title, searchable, deletable, renderActions }) {
   const toast = useToast();
   const [rows, setRows] = useState([]);
@@ -1972,7 +2074,7 @@ function AdminTable({ resource, columns, title, searchable, deletable, renderAct
               <thead>
                 <tr className="border-b border-gray-100 text-left text-gray-400">
                   {columns.map((c) => <th key={c} className="px-4 py-3 font-medium capitalize whitespace-nowrap">{c.replace(/_/g, " ")}</th>)}
-                  {(deletable || renderActions) && <th className="px-4 py-3"></th>}
+                  {(deletable || renderActions) && <th className="px-4 py-3">Actions</th>}
                 </tr>
               </thead>
               <tbody>
@@ -2018,7 +2120,6 @@ function AdminTable({ resource, columns, title, searchable, deletable, renderAct
   );
 }
 
-/* Users: PATCH /admin/users/:id/suspend|unsuspend, DELETE /admin/users/:id */
 function AdminUsersTable() {
   const toast = useToast();
   const suspendUser = async (id, suspend, reload) => {
@@ -2056,7 +2157,6 @@ function AdminUsersTable() {
   );
 }
 
-/* Reports: PATCH /admin/reports/:id/resolve|dismiss — no delete endpoint */
 function AdminReportsTable() {
   const toast = useToast();
   const act = async (id, action, reload) => {
@@ -2092,7 +2192,6 @@ function AdminReportsTable() {
   );
 }
 
-/* Advertisements: PATCH approve/reject/pause, DELETE */
 function AdminAdsTable() {
   const toast = useToast();
   const act = async (id, action, reload) => {
@@ -2213,7 +2312,6 @@ function AdminCategories() {
   );
 }
 
-/* Ad pricing == /admin/durations (duration_days, price, is_active). Edited per-row (no bulk update endpoint). */
 function AdminDurations() {
   const toast = useToast();
   const [durations, setDurations] = useState([]);
