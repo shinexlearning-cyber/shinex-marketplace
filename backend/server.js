@@ -96,17 +96,17 @@ app.use('/api/admin/payments', adminPaymentRoutes);
 app.use('/api/admin/reports', adminReportRoutes);
 app.use('/api/admin/contact', adminContactRoutes);
 
-// Serve frontend for all non-API routes
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../frontend/index.html'));
-});
-
 // 404 handler for API routes only
 app.use('/api/*', (req, res) => {
   res.status(404).json({
     success: false,
     message: 'API route not found'
   });
+});
+
+// Serve frontend for all non-API routes
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../frontend/index.html'));
 });
 
 // Error handling middleware
