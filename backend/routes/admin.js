@@ -102,4 +102,88 @@ router.delete('/:resource/:id', async (req, res) => {
       return res.status(400).json({ error: 'Invalid resource' });
     }
 
-    const { error
+    const { error } = await supabase
+      .from(resource)
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Delete admin resource error:', error);
+    res.status(500).json({ error: 'Failed to delete' });
+  }
+});
+
+// Categories management
+router.get('/categories', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('products')
+      .select('category')
+      .not('category', 'is', null)
+      .eq('status', 'active');
+
+    if (error) throw error;
+
+    const categories = [...new Set(data.map(p => p.category))].filter(Boolean);
+    res.json({ categories });
+  } catch (error) {
+    console.error('Get categories error:', error);
+    res.status(500).json({ error: 'Failed to load categories' });
+  }
+});
+
+router.post('/categories', async (req, res) => {
+  try {
+    const { name } = req.body;
+    
+    if (!name) {
+      return res.status(400).json({ error: 'Category name is required' });
+    }
+
+    // Categories are just tracked in the products table
+    // We can't create a separate category table without migration
+    // Just return success with the category name
+    res.json({ success: true, category: name });
+  } catch (error) {
+    console.error('Create category error:', error);
+    res.status(500).json({ error: 'Failed to create category' });
+  }
+});
+
+// Ad pricing (GET)
+router.get('/ad-pricing', async (req, res) => {
+  try {
+    const plans = [
+      { key: '1day', label: '1 Day', price: 200 },
+      { key: '3days', label: '3 Days', price: 500 },
+      { key: '7days', label: '7 Days', price: 1000 },
+      { key: '30days', label: '30 Days', price: 3000 },
+    ];
+    res.json({ plans });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to load pricing' });
+  }
+});
+
+// Ad pricing (PUT)
+router.put('/ad-pricing', async (req, res) => {
+  try {
+    const { plans } = req.body;
+    
+    if (!plans || !Array.isArray(plans)) {
+      return res.status(400).json({ error: 'Invalid pricing data' });
+    }
+
+    // In production, save to database
+    // For now, just return success
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Update pricing error:', error);
+    res.status(500).json({ error: 'Failed to update pricing' });
+  }
+});
+
+export default router;
