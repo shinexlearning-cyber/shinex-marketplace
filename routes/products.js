@@ -255,6 +255,36 @@ router.get('/', async (req, res) => {
   }
 });
 
+ // Get categories
+router.get('/categories/all', async (req, res) => {
+  try {
+    const { data: categories, error } = await supabase
+      .from('categories')
+      .select('*')
+      .eq('is_active', true)
+      .order('name');
+
+    if (error) {
+      console.error('Get categories error:', error);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch categories'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: categories
+    });
+  } catch (error) {
+    console.error('Get categories error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch categories'
+    });
+  }
+});
+
 // Get single product
 router.get('/:id', async (req, res) => {
   try {
@@ -575,36 +605,7 @@ router.patch('/:id/sold', authMiddleware, async (req, res) => {
       });
     }
 
-    // Get categories
-router.get('/categories/all', async (req, res) => {
-  try {
-    const { data: categories, error } = await supabase
-      .from('categories')
-      .select('*')
-      .eq('is_active', true)
-      .order('name');
-
-    if (error) {
-      console.error('Get categories error:', error);
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to fetch categories'
-      });
-    }
-
-    res.json({
-      success: true,
-      data: categories
-    });
-  } catch (error) {
-    console.error('Get categories error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to fetch categories'
-    });
-  }
-});
-
+   
     // Check ownership
     if (product.user_id !== req.user.id && !req.user.is_admin) {
       return res.status(403).json({
