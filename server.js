@@ -4,8 +4,6 @@ const cors = require('cors');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('./supabase/client');
-const path = require('path');
-const fs = require('fs');
 
 // Import routes
 const authRoutes = require('./routes/auth');
@@ -80,8 +78,6 @@ app.use(express.json({
 }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Serve static frontend files
-app.use(express.static(path.join(__dirname, '../frontend')));
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
@@ -119,10 +115,6 @@ app.use('/api/*', (req, res) => {
   });
 });
 
-// Serve frontend for all non-API routes
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../frontend/index.html'));
-});
 
 // Error handling middleware
 app.use((err, req, res, next) => {
@@ -141,5 +133,4 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 SHINEX Marketplace API running on port ${PORT}`);
   console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`Serving frontend from: ${path.join(__dirname, '../frontend')}`);
 });
