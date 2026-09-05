@@ -26,7 +26,7 @@ router.get('/', async (req, res) => {
       .from('advertisements')
       .select(`
         *,
-        user:users(id, username, full_name, email),
+        user:users!advertisements_user_id_fkey(id, username, full_name, email),
         duration:advertisement_durations(duration_days, price)
       `, { count: 'exact' });
 
@@ -90,7 +90,7 @@ router.get('/:id', async (req, res) => {
       .from('advertisements')
       .select(`
         *,
-        user:users(id, username, full_name, email, phone),
+        user:users!advertisements_user_id_fkey(id, username, full_name, email, phone),
         duration:advertisement_durations(id, duration_days, price),
         payment:advertisement_payments(*)
       `)
