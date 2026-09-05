@@ -158,9 +158,9 @@ router.get('/my', authMiddleware, async (req, res) => {
       .from('reports')
       .select(`
         *,
-        target_user:users!target_user_id(id, username, full_name),
-        target_product:products!target_product_id(id, name),
-        target_advertisement:advertisements!target_advertisement_id(id, title)
+       target_user:users!reports_target_user_id_fkey(...)
+target_product:products!reports_target_product_id_fkey(...)
+target_advertisement:advertisements!reports_target_advertisement_id_fkey(...)
       `, { count: 'exact' })
       .eq('reporter_id', req.user.id)
       .order('created_at', { ascending: false })
