@@ -18,11 +18,11 @@ router.get('/', async (req, res) => {
       .from('reports')
       .select(`
         *,
-        reporter:users!reporter_id(id, username, full_name, email),
-        target_user:users!target_user_id(id, username, full_name),
-        target_product:products!target_product_id(id, name, price),
-        target_advertisement:advertisements!target_advertisement_id(id, title),
-        resolved_by_user:users!resolved_by(id, username, full_name)
+        reporter:users!reports_reporter_id_fkey(id, username, full_name, email),
+target_user:users!reports_target_user_id_fkey(id, username, full_name),
+target_product:products!reports_target_product_id_fkey(id, name, price),
+target_advertisement:advertisements!reports_target_advertisement_id_fkey(id, title),
+resolved_by_user:users!reports_resolved_by_fkey(id, username, full_name)
       `, { count: 'exact' });
 
     if (status) {
@@ -78,11 +78,11 @@ router.get('/:id', async (req, res) => {
       .from('reports')
       .select(`
         *,
-        reporter:users!reporter_id(id, username, full_name, email, phone),
-        target_user:users!target_user_id(id, username, full_name, email),
-        target_product:products!target_product_id(id, name, description, price, user_id),
-        target_advertisement:advertisements!target_advertisement_id(id, title, description, user_id),
-        resolved_by_user:users!resolved_by(id, username, full_name)
+        reporter:users!reports_reporter_id_fkey(id, username, full_name, email, phone),
+target_user:users!reports_target_user_id_fkey(id, username, full_name, email),
+target_product:products!reports_target_product_id_fkey(id, name, description, price, user_id),
+target_advertisement:advertisements!reports_target_advertisement_id_fkey(id, title, description, user_id),
+resolved_by_user:users!reports_resolved_by_fkey(id, username, full_name)
       `)
       .eq('id', id)
       .single();
