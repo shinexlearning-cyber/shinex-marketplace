@@ -43,7 +43,8 @@ const allowedOrigins = [
   'http://localhost:3001',
   'http://localhost:5000',
   'https://shinexmarket.onrender.com',
-  'https://shinex-marketplace.onrender.com'
+  'https://shinex-marketplace.onrender.com',
+  'https://shinex-admin.onrender.com'
 ].filter(Boolean);
 
 app.use(cors({
