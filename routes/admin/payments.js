@@ -25,7 +25,7 @@ router.get('/', async (req, res) => {
       .select(`
         *,
         user:users(id, username, full_name, email),
-        advertisement:advertisements(id, title, duration_days, amount)
+        advertisement:advertisements!advertisement_payments_advertisement_id_fkey(id, title, duration_days, amount)
       `, { count: 'exact' });
 
     if (status) {
@@ -93,10 +93,15 @@ router.get('/stats', async (req, res) => {
     }
 
     // Count by status
-    const { data: statusCounts, error: statusError } = await supabase
+    const { data: allStatuses, error: statusError } = await supabase
       .from('advertisement_payments')
-      .select('status', { count: 'exact' })
-      .group('status');
+      .select('status');
+
+    const statusCounts = (allStatuses || []).reduce((acc, row) => {
+      const status = row.status || 'unknown';
+      acc[status] = (acc[status] || 0) + 1;
+      return acc;
+    }, {});
 
     // Count by month (last 12 months)
     const { data: monthlyCounts, error: monthlyError } = await supabase
@@ -141,7 +146,7 @@ router.get('/:id', async (req, res) => {
       .select(`
         *,
         user:users(id, username, full_name, email, phone),
-        advertisement:advertisements(
+        advertisement:advertisements!advertisement_payments_advertisement_id_fkey(
           id, title, description, duration_days, amount,
           duration:advertisement_durations(duration_days, price)
         )
