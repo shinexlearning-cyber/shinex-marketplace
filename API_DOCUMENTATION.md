@@ -93,6 +93,33 @@
 
 ---
 
+### POST /auth/google
+**Auth:** No
+
+Authenticates a user with a Google Identity Services ID token. The backend verifies the token with Google, checks the configured `GOOGLE_CLIENT_ID`, requires a verified Google email, then returns the normal SHINEX JWT/session payload.
+
+**Request:**
+```json
+{
+  "credential": "GOOGLE_ID_TOKEN"
+}
+```
+
+`id_token` is also accepted as an alias for `credential`.
+
+**Server environment variable:**
+`GOOGLE_CLIENT_ID` — the OAuth 2.0 Web Client ID created in Google Cloud Console. Never put the client secret in the frontend.
+
+**Response:** Same authenticated `data.user` + `data.token` shape as `POST /auth/login`.
+
+**Account behavior:**
+- Existing SHINEX accounts with the same verified email are linked to that Google account without changing their password.
+- New Google users receive a normal SHINEX account and an automatically generated unique username.
+- Existing `is_admin` status is preserved; Google sign-in never grants admin privileges.
+- Suspended users are blocked.
+
+---
+
 ### GET /auth/me
 **Auth:** Yes
 

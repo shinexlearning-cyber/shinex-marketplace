@@ -25,3 +25,5 @@ services:
         sync: false
       - key: PAYSTACK_PUBLIC_KEY
         sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
