@@ -1,0 +1,29 @@
+services:
+  - type: web
+    name: shinex-marketplace
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: FRONTEND_URL
+        value: https://shinexmarket.onrender.com
+      - key: ADMIN_FRONTEND_URL
+        value: https://shinex-admin.onrender.com
+      - key: BACKEND_URL
+        value: https://shinex-marketplace.onrender.com
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+      - key: PAYSTACK_PUBLIC_KEY
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
