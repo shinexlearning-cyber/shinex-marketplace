@@ -108,10 +108,7 @@ CREATE TABLE advertisements (
   starts_at TIMESTAMP,
   expires_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_advertisements_payment_status (payment_status),
-  INDEX idx_advertisements_approval_status (approval_status),
-  INDEX idx_advertisements_expires_at (expires_at)
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 8. ADVERTISEMENT PAYMENTS TABLE
@@ -126,9 +123,7 @@ CREATE TABLE advertisement_payments (
   payment_channel VARCHAR(50),
   paid_at TIMESTAMP,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  INDEX idx_payments_paystack_reference (paystack_reference),
-  INDEX idx_payments_status (status)
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 9. REPORTS TABLE
@@ -203,6 +198,9 @@ CREATE INDEX idx_favorites_seller_id ON favorites(seller_id);
 CREATE INDEX idx_advertisements_user_id ON advertisements(user_id);
 CREATE INDEX idx_advertisements_duration_id ON advertisements(duration_id);
 CREATE INDEX idx_advertisements_expires_at ON advertisements(expires_at);
+CREATE INDEX idx_advertisements_payment_status ON advertisements(payment_status);
+CREATE INDEX idx_advertisements_approval_status ON advertisements(approval_status);
+CREATE INDEX idx_advertisement_payments_status ON advertisement_payments(status);
 CREATE INDEX idx_reports_reporter_id ON reports(reporter_id);
 CREATE INDEX idx_reports_status ON reports(status);
 CREATE INDEX idx_contact_messages_status ON contact_messages(status);

@@ -1,10 +1,12 @@
 const express = require('express');
 const { supabase } = require('../supabase/client');
 const { validate, schemas } = require('../middleware/validation');
+const authMiddleware = require('../middleware/auth');
+const optionalAuth = require('../middleware/optionalAuth');
 const router = express.Router();
 
 // Send contact message
-router.post('/', validate(schemas.contact), async (req, res) => {
+router.post('/', optionalAuth, validate(schemas.contact), async (req, res) => {
   try {
     const { name, email, phone, subject, message } = req.body;
 
@@ -25,7 +27,8 @@ router.post('/', validate(schemas.contact), async (req, res) => {
           phone: phone || null,
           subject: finalSubject,
           message,
-          status: 'new'
+          status: 'new',
+          user_id: req.user?.id || null
         }
       ])
       .select('*')
@@ -73,4 +76,15 @@ router.get('/info', (req, res) => {
   });
 });
 
+module.exports = router;
+
+
+// Authenticated user's support conversations and admin replies.
+router.get('/my', authMiddleware, async (req,res)=>{
+  try {
+    const {data,error}=await supabase.from('contact_messages').select('*, replies:contact_replies(id,admin_id,message,created_at)').eq('user_id',req.user.id).order('created_at',{ascending:false});
+    if(error)return res.status(500).json({success:false,message:'Failed to load your support messages'});
+    res.json({success:true,data:data||[]});
+  } catch(e){console.error(e);res.status(500).json({success:false,message:'Failed to load your support messages'});}
+});
 module.exports = router;

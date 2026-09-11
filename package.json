@@ -4,7 +4,8 @@
   "private": true,
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "process-expirations": "node scripts/process-expirations.js"
   },
   "engines": {
     "node": ">=20"

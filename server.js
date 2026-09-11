@@ -16,6 +16,10 @@ const contactRoutes = require('./routes/contact');
 const activityRoutes = require('./routes/activity');
 const cartRoutes = require('./routes/cart');
 const orderRoutes = require('./routes/orders');
+const subscriptionRoutes = require('./routes/subscriptions');
+const notificationRoutes = require('./routes/notifications');
+const tagRoutes = require('./routes/tags');
+const contentRoutes = require('./routes/content');
 
 // Import admin routes
 const adminUserRoutes = require('./routes/admin/users');
@@ -26,6 +30,9 @@ const adminDurationRoutes = require('./routes/admin/durations');
 const adminPaymentRoutes = require('./routes/admin/payments');
 const adminReportRoutes = require('./routes/admin/reports');
 const adminContactRoutes = require('./routes/admin/contact');
+const adminSubscriptionRoutes = require('./routes/admin/subscriptions');
+const adminTagRoutes = require('./routes/admin/tags');
+const adminContentRoutes = require('./routes/admin/content');
 
 const app = express();
 
@@ -82,6 +89,8 @@ app.use(express.json({
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Health check endpoint
+app.get('/health', (req, res) => { res.json({ success: true, message: 'SHINEX Marketplace API is running' }); });
+
 app.get('/api/health', (req, res) => {
   res.json({
     success: true,
@@ -100,6 +109,10 @@ app.use('/api/contact', contactRoutes);
 app.use('/api/activity', activityRoutes);
 app.use('/api/cart', cartRoutes);
 app.use('/api/orders', orderRoutes);
+app.use('/api/subscriptions', subscriptionRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/tags', tagRoutes);
+app.use('/api/content', contentRoutes);
 
 // Admin routes
 app.use('/api/admin/users', adminUserRoutes);
@@ -110,6 +123,9 @@ app.use('/api/admin/durations', adminDurationRoutes);
 app.use('/api/admin/payments', adminPaymentRoutes);
 app.use('/api/admin/reports', adminReportRoutes);
 app.use('/api/admin/contact', adminContactRoutes);
+app.use('/api/admin/subscriptions', adminSubscriptionRoutes);
+app.use('/api/admin/tags', adminTagRoutes);
+app.use('/api/admin/content', adminContentRoutes);
 
 // 404 handler for API routes only
 app.use('/api/{*splat}', (req, res) => {

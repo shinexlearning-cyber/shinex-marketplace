@@ -5,7 +5,7 @@ const PAYSTACK_SECRET_KEY = process.env.PAYSTACK_SECRET_KEY;
 const PAYSTACK_BASE_URL = 'https://api.paystack.co';
 
 // Initialize Paystack transaction
-const initializeTransaction = async (email, amount, reference, metadata = {}) => {
+const initializeTransaction = async (email, amount, reference, metadata = {}, callbackUrl = null) => {
   try {
     // callback_url must point at the Express backend (this server), since
     // /api/advertisements/payment/callback is a backend route — the React
@@ -19,7 +19,7 @@ const initializeTransaction = async (email, amount, reference, metadata = {}) =>
         email,
         amount: Math.round(amount * 100), // Convert to kobo
         reference,
-        callback_url: `${backendUrl}/api/advertisements/payment/callback`,
+        callback_url: callbackUrl || `${backendUrl}/api/advertisements/payment/callback`,
         metadata
       },
       {

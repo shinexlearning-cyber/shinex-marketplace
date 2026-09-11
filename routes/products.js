@@ -1,6 +1,7 @@
 const express = require('express');
 const { supabase } = require('../supabase/client');
 const authMiddleware = require('../middleware/auth');
+const optionalAuth = require('../middleware/optionalAuth');
 const { uploadMultiple } = require('../middleware/upload');
 const { uploadImage, deleteImage, deleteImages } = require('../services/cloudinary');
 const { getPagination, buildPaginationResponse, isValidUUID } = require('../utils/helpers');
@@ -11,6 +12,7 @@ const router = express.Router();
 router.post('/', authMiddleware, uploadMultiple, async (req, res) => {
   try {
     const { name, description, price, category_id, condition, location } = req.body;
+    const requestedTags = Array.isArray(req.body.tags) ? req.body.tags : (typeof req.body.tags === 'string' ? req.body.tags.split(',').map(x => x.trim()).filter(Boolean) : []);
 
     // Validate required fields
     if (!name || !price || !category_id) {
@@ -52,13 +54,15 @@ router.post('/', authMiddleware, uploadMultiple, async (req, res) => {
           price: parseFloat(price),
           category_id,
           condition: condition || 'new',
-          location: location || ''
+          location: location || '',
+          listing_status: 'pending'
         }
       ])
       .select('*')
       .single();
 
     if (productError) {
+      if (productError.message === 'LISTING_LIMIT_REACHED') return res.status(409).json({ success:false, error_code:'LISTING_LIMIT_REACHED', message:'You have reached your current subscription listing limit.' });
       console.error('Create product error:', productError);
       return res.status(500).json({
         success: false,
@@ -114,9 +118,14 @@ router.post('/', authMiddleware, uploadMultiple, async (req, res) => {
       }
     }
 
+    if (requestedTags.length && product?.id) {
+      const { data: tags } = await supabase.from('listing_tags').select('id').in('id', requestedTags);
+      if (tags?.length) await supabase.from('product_tags').insert(tags.map(t => ({ product_id: product.id, tag_id: t.id }))).catch(() => {});
+    }
+
     res.status(201).json({
       success: true,
-      message: 'Product created successfully',
+      message: 'Product submitted for review',
       data: {
         product: {
           ...product,
@@ -184,9 +193,9 @@ router.get('/', async (req, res) => {
     }
 
     if (status === 'active') {
-      query = query.eq('is_active', true).eq('is_sold', false);
+      query = query.eq('is_active', true).eq('is_sold', false).in('listing_status', ['approved','active']);
     } else if (status === 'all') {
-      query = query.eq('is_active', true);
+      query = query.eq('is_active', true).eq('is_sold', false).in('listing_status', ['approved','active']);
     }
 
     // Apply sorting
@@ -256,7 +265,7 @@ router.get('/', async (req, res) => {
 });
 
 // Get single product
-router.get('/:id', async (req, res) => {
+router.get('/:id', optionalAuth, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -271,7 +280,7 @@ router.get('/:id', async (req, res) => {
       .from('products')
       .select(`
         *,
-        user:users(id, username, full_name, email, phone, bio, location, whatsapp, avatar_url, shop_name, shop_description),
+        user:users(id, username, full_name, bio, location, whatsapp, avatar_url, shop_name, shop_description),
         category:categories(id, name, slug),
         images:product_images(*)
       `)
@@ -283,6 +292,10 @@ router.get('/:id', async (req, res) => {
         success: false,
         message: 'Product not found'
       });
+    }
+
+    if (!['approved','active'].includes(product.listing_status) && product.user_id !== req.user?.id && !req.user?.is_admin) {
+      return res.status(404).json({ success:false, message:'Product not found' });
     }
 
     // Increment view count
@@ -300,8 +313,6 @@ router.get('/:id', async (req, res) => {
         id: product.user.id,
         username: product.user.username,
         full_name: product.user.full_name,
-        email: product.user.email,
-        phone: product.user.phone,
         bio: product.user.bio,
         location: product.user.location,
         whatsapp: product.user.whatsapp,
@@ -329,6 +340,7 @@ router.put('/:id', authMiddleware, uploadMultiple, async (req, res) => {
   try {
     const { id } = req.params;
     const { name, description, price, category_id, condition, location } = req.body;
+    const requestedTags = Array.isArray(req.body.tags) ? req.body.tags : (typeof req.body.tags === 'string' ? req.body.tags.split(',').map(x => x.trim()).filter(Boolean) : []);
 
     if (!isValidUUID(id)) {
       return res.status(400).json({
@@ -383,6 +395,14 @@ router.put('/:id', authMiddleware, uploadMultiple, async (req, res) => {
     if (category_id) updates.category_id = category_id;
     if (condition) updates.condition = condition;
     if (location !== undefined) updates.location = location;
+    // Seller edits require a fresh moderation pass. Admin edits preserve the current status.
+    if (!req.user.is_admin) {
+      updates.listing_status = 'pending';
+      updates.rejection_reason = null;
+      updates.approved_at = null;
+      updates.approved_by = null;
+      updates.is_active = false;
+    }
 
     // Update product
     const { data: product, error } = await supabase

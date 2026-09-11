@@ -1,6 +1,7 @@
 const express = require('express');
 const { supabase } = require('../supabase/client');
 const authMiddleware = require('../middleware/auth');
+const optionalAuth = require('../middleware/optionalAuth');
 const { uploadSingle } = require('../middleware/upload');
 const { uploadImage, deleteImage } = require('../services/cloudinary');
 const { getPagination, buildPaginationResponse, isValidUUID } = require('../utils/helpers');
@@ -62,7 +63,8 @@ router.get('/:username', async (req, res) => {
       .from('products')
       .select('*', { count: 'exact', head: true })
       .eq('user_id', user.id)
-      .eq('is_active', true);
+      .eq('is_active', true)
+      .eq('is_sold', false);
 
     if (productCountError) {
       console.error('Product count error:', productCountError);
@@ -106,7 +108,7 @@ router.get('/:username', async (req, res) => {
 });
 
 // Get user's shop
-router.get('/:username/shop', async (req, res) => {
+router.get('/:username/shop', optionalAuth, async (req, res) => {
   try {
     const { username } = req.params;
     const { page = 1, limit = 20 } = req.query;
@@ -127,15 +129,20 @@ router.get('/:username/shop', async (req, res) => {
     }
 
     // Get products
-    const { data: products, error: productsError, count } = await supabase
+    let productQuery = supabase
       .from('products')
       .select(`
         *,
         category:categories(name, slug),
         images:product_images(*)
       `, { count: 'exact' })
-      .eq('user_id', user.id)
-      .eq('is_active', true)
+      .eq('user_id', user.id);
+
+    if (!req.user || req.user.id !== user.id) {
+      productQuery = productQuery.eq('is_active', true).eq('is_sold', false).in('listing_status', ['approved','active']);
+    }
+
+    const { data: products, error: productsError, count } = await productQuery
       .order('created_at', { ascending: false })
       .range(offset, offset + pageLimit - 1);
 
@@ -162,6 +169,7 @@ router.get('/:username/shop', async (req, res) => {
           bio: user.bio,
           location: user.location,
           whatsapp: user.whatsapp,
+          is_owner: !!req.user && req.user.id === user.id,
           product_count: count || 0
         },
         products: formattedProducts,

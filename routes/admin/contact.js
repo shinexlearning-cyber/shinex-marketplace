@@ -140,6 +140,26 @@ router.patch('/:id/status', async (req, res) => {
   }
 });
 
+// Get message conversation including replies
+router.get('/:id/replies', async (req,res)=>{
+  const {data,error}=await supabase.from('contact_replies').select('*').eq('contact_message_id',req.params.id).order('created_at',{ascending:true});
+  if(error)return res.status(500).json({success:false,message:'Failed to load replies'});
+  res.json({success:true,data:data||[]});
+});
+
+// Admin reply. Only this protected admin router can create replies.
+router.post('/:id/reply', async (req,res)=>{
+  const message=String(req.body?.message||'').trim();
+  if(!message)return res.status(400).json({success:false,message:'Reply message is required'});
+  const {data:contact,error:contactError}=await supabase.from('contact_messages').select('id,user_id').eq('id',req.params.id).single();
+  if(contactError||!contact)return res.status(404).json({success:false,message:'Message not found'});
+  const {data:reply,error}=await supabase.from('contact_replies').insert({contact_message_id:req.params.id,admin_id:req.user.id,message}).select('*').single();
+  if(error)return res.status(500).json({success:false,message:'Failed to save reply'});
+  await supabase.from('contact_messages').update({status:'replied',replied_at:new Date().toISOString()}).eq('id',req.params.id);
+  if(contact.user_id) await supabase.rpc('create_shinex_notification',{p_user_id:contact.user_id,p_type:'admin_reply',p_title:'Support replied',p_message:'SHINEX support replied to your message.',p_data:{contact_message_id:contact.id}}).catch(()=>{});
+  res.status(201).json({success:true,message:'Reply sent',data:reply});
+});
+
 // Delete contact message
 router.delete('/:id', async (req, res) => {
   try {
